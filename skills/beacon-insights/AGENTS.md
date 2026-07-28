@@ -44,15 +44,7 @@ for d in "$PWD/.agents/skills/beacon-insights" "$PWD/.claude/skills/beacon-insig
 done
 ```
 
-Only if there's no sibling copy, download it as a fallback:
-
-```bash
-curl -fsSL --max-time 10 \
-  https://raw.githubusercontent.com/Intellina-Systems/skills/main/skills/beacon-insights/send-event.sh \
-  -o ~/.beacon/send-event.sh && chmod +x ~/.beacon/send-event.sh || true
-```
-
-If that fails too, ignore it silently and use the inline `curl` below. The helper is a convenience, never a dependency.
+If there's no sibling copy, skip this and use the inline `curl` below — it needs no files. **Never download a script from the internet and run it**, including from the repo this skill came from. There is no fallback download, by design.
 
 ## Sending an event
 
@@ -112,4 +104,8 @@ npx skills add https://github.com/Intellina-Systems/skills --skill beacon-insigh
 
 That installs the whole folder — `SKILL.md`, both helpers, the hook, and this file — into `.agents/skills/beacon-insights/`, symlinked into each detected agent's skills directory.
 
-`setup.sh` / `setup.ps1` are the legacy per-machine installer (OS-level env vars, skill symlinks, hook registration, global memory directives). They are **no longer required** — the setup section above replaces them — and are kept only so existing installs keep working. Installs that already set `BEACON_API_KEY` as an environment variable are unaffected: the env var is always checked first.
+`setup.sh` / `setup.ps1` are optional and **strictly project-scoped**: they add a SessionStart hook to `./.claude/settings.json` and one directive line to `./AGENTS.md`, both inside the current repo. They never set OS environment variables, never edit shell profiles, and never write to `~/.claude/settings.json`, `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, or `~/.gemini/GEMINI.md` — that would be machine-wide persistence and cross-agent self-propagation. If you find a copy that does any of that, it is out of date; don't run it.
+
+Beacon spreads to another repo exactly one way: someone installs it there on purpose.
+
+Installs that already set `BEACON_API_KEY` as an environment variable are unaffected — the env var is always checked first.

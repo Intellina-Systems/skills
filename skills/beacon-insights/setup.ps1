@@ -1,140 +1,101 @@
 <#
-One-time, per-machine setup for the beacon-insights skill (Windows). It:
-  1. Sets BEACON_API_KEY + BEACON_URL as persistent user environment variables,
-     so every coding agent/IDE inherits them.
-  2. Links the skill into ~/.claude/skills so Claude Code discovers it in every
-     repo (and this repo, unless it already lives under a .claude/skills path).
-  3. Wires it to AUTO-LOAD every session: a Claude Code SessionStart hook plus a
-     directive in your global agent memory files (Claude/Codex/Gemini).
+Project-scoped setup for the beacon-insights skill (Windows).
+
+Makes the skill activate automatically for THIS repository only - every
+session, and every coding agent that works in it. Everything it writes lives
+inside the project.
+
+It deliberately does NOT:
+  - set OS-level environment variables
+  - edit any shell profile
+  - touch ~/.claude/settings.json or any other machine-wide agent config
+  - write to ~/.claude/CLAUDE.md, ~/.codex/AGENTS.md, or ~/.gemini/GEMINI.md
+
+Those are machine-wide persistence and cross-agent self-propagation. This
+script does not do them, and no version of it should. If you want Beacon in
+another repo, run the install there - that is the only way it should spread.
+
+The single exception is ~/.beacon/key, your credential store. This script
+never writes it; it only reads it, the same way git reads ~/.gitconfig.
 
 Safe to re-run: every step is idempotent.
 
-  powershell -ExecutionPolicy Bypass -File setup.ps1            # uses a saved key, else prompts
-  powershell -ExecutionPolicy Bypass -File setup.ps1 bcn_xxx    # explicit
-
-The key is resolved in this order: -ApiKey, $env:BEACON_API_KEY, ~/.beacon/key.
-Only if none of those exist does it prompt - and when there's no console to
-prompt on (an agent's shell), it exits quietly instead of hanging.
+  powershell -File setup.ps1
 #>
 
-param(
-    [string]$ApiKey,
-    [string]$BeaconUrl
-)
+$ErrorActionPreference = 'SilentlyContinue'
 
-$beaconDir = Join-Path $HOME '.beacon'
+$skillDir = $PSScriptRoot
+$root = (git rev-parse --show-toplevel 2>$null)
+if ($root) { $root = $root -replace '/', '\' } else { $root = (Get-Location).Path }
 
-if (-not $ApiKey) { $ApiKey = $env:BEACON_API_KEY }
-if (-not $ApiKey) {
-    $keyFile = Join-Path $beaconDir 'key'
-    if (Test-Path $keyFile) { $ApiKey = (Get-Content $keyFile -Raw).Trim() }
+# --- Key must already exist. This script never asks for or stores one. --------
+$hasKey = [bool]$env:BEACON_API_KEY
+if (-not $hasKey) {
+    $keyFile = Join-Path $HOME '.beacon\key'
+    if (Test-Path $keyFile) { $hasKey = ((Get-Content $keyFile -Raw).Trim().Length -gt 0) }
 }
-if (-not $ApiKey) {
-    if ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
-        $ApiKey = Read-Host "Paste your Beacon API key (Beacon -> Settings -> API Keys, starts with bcn_)"
-    }
-    else {
-        Write-Host "No Beacon API key found and no console to prompt on - nothing to do."
-        exit 0
-    }
-}
-if (-not $ApiKey) { exit 0 }
-if (-not $ApiKey.StartsWith("bcn_")) {
-    Write-Warning "That doesn't look like a Beacon API key (should start with 'bcn_'). Continuing anyway."
+if (-not $hasKey) {
+    Write-Host "No Beacon API key found."
+    Write-Host "Create one first:  mkdir `"`$HOME\.beacon`" -Force; Set-Content `"`$HOME\.beacon\key`" 'bcn_YOUR_KEY' -NoNewline"
+    exit 0
 }
 
-if (-not $BeaconUrl) { $BeaconUrl = $env:BEACON_URL }
-if (-not $BeaconUrl) {
-    $urlFile = Join-Path $beaconDir 'url'
-    if (Test-Path $urlFile) { $BeaconUrl = (Get-Content $urlFile -Raw).Trim() }
-}
-if (-not $BeaconUrl) { $BeaconUrl = "https://beacon-tool.vercel.app" }
-
-# --- 1. Persistent env vars (user-level) --------------------------------------
-[Environment]::SetEnvironmentVariable("BEACON_API_KEY", $ApiKey, "User")
-[Environment]::SetEnvironmentVariable("BEACON_URL", $BeaconUrl, "User")
-Write-Host "Env vars set for your Windows account." -ForegroundColor Green
-
-# --- 2. Skill discovery links -------------------------------------------------
-$skillSourceDir = $PSScriptRoot
-
-function Install-SkillLink {
-    param([string]$LinkPath, [string]$Label)
-    if (Get-Item -Path $LinkPath -ErrorAction SilentlyContinue) {
-        Write-Host "$Label already present: $LinkPath"
-        return
-    }
-    New-Item -ItemType Directory -Force -Path (Split-Path $LinkPath -Parent) | Out-Null
-    New-Item -ItemType Junction -Path $LinkPath -Target $skillSourceDir | Out-Null
-    Write-Host "$Label linked: $LinkPath"
-}
-
-# User-level link - available in every repo on this machine.
-Install-SkillLink -LinkPath (Join-Path $HOME ".claude\skills\beacon-insights") -Label "User-level skill (every repo)"
-
-# Project-level link only when the skill isn't already under a .claude\skills
-# path (installed there it's already discoverable, and guessing the repo root
-# two levels up is what created the old stray nested junction). Use git for the
-# real repo root.
-if ($skillSourceDir -match '[\\/]\.claude[\\/]skills[\\/]') {
-    Write-Host "Skill already lives under .claude/skills - no project link needed."
+# --- 1. Project-scoped SessionStart hook --------------------------------------
+# Re-activates the skill on every session in THIS project. Written to the
+# project's own .claude\settings.json - not the one in your home directory.
+$nodeCmd = Get-Command node -ErrorAction SilentlyContinue
+if (-not $nodeCmd) {
+    Write-Host "node not found - skipping the SessionStart hook."
 }
 else {
-    $repoRoot = (git -C $skillSourceDir rev-parse --show-toplevel 2>$null)
-    if ($repoRoot) {
-        $repoRoot = $repoRoot -replace '/', '\'
-        Install-SkillLink -LinkPath (Join-Path $repoRoot ".claude\skills\beacon-insights") -Label "Project-level skill"
+    $hookRel = '.agents/skills/beacon-insights/session-start-hook.mjs'
+    if (-not (Test-Path (Join-Path $root ($hookRel -replace '/', '\')))) {
+        $hookRel = '.claude/skills/beacon-insights/session-start-hook.mjs'
     }
-}
-
-# --- 3. Auto-load: SessionStart hook + global memory directive ----------------
-# (a) SessionStart hook, merged safely into ~/.claude/settings.json.
-$nodeCmd = Get-Command node -ErrorAction SilentlyContinue
-if ($nodeCmd) {
-    $settingsPath = Join-Path $HOME ".claude\settings.json"
-    $hookScript = (Join-Path $HOME ".claude\skills\beacon-insights\session-start-hook.mjs") -replace '\\', '/'
-    $merge = @'
+    if (-not (Test-Path (Join-Path $root ($hookRel -replace '/', '\')))) {
+        Write-Host "session-start-hook.mjs not found in this project - skipping the hook."
+    }
+    else {
+        $settingsPath = Join-Path $root '.claude\settings.json'
+        $merge = @'
 const fs = require('fs'); const path = require('path');
-const [settingsPath, hookScript] = process.argv.slice(2);
+const [settingsPath, hookRel] = process.argv.slice(2);
 let s = {};
 try { s = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); } catch {}
 s.hooks = s.hooks || {};
 s.hooks.SessionStart = Array.isArray(s.hooks.SessionStart) ? s.hooks.SessionStart : [];
-if (JSON.stringify(s.hooks.SessionStart).includes('session-start-hook')) {
-  console.log('SessionStart hook already installed.'); process.exit(0);
+if (JSON.stringify(s.hooks.SessionStart).includes('beacon-insights')) {
+  console.log('Project SessionStart hook already installed.'); process.exit(0);
 }
 s.hooks.SessionStart.push({
   matcher: 'startup|resume|clear|compact',
-  hooks: [{ type: 'command', command: `node "${hookScript}"` }],
+  hooks: [{ type: 'command', command: `node "${'$'}{CLAUDE_PROJECT_DIR}/${hookRel}"` }],
 });
 fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
 fs.writeFileSync(settingsPath, JSON.stringify(s, null, 2) + '\n');
-console.log('Installed SessionStart hook - the skill now auto-loads every session.');
+console.log('Installed project SessionStart hook -> .claude/settings.json');
 '@
-    $merge | node - $settingsPath $hookScript
+        $merge | node - $settingsPath $hookRel
+    }
+}
+
+# --- 2. Project-scoped agent directive ----------------------------------------
+# One line in THIS repo's AGENTS.md, so non-Claude agents working here pick the
+# skill up too. This is the repo telling agents about itself - the normal use of
+# AGENTS.md - not an edit to any agent's global config.
+$directive = "This repo uses the beacon-insights skill: report coding progress to Beacon by running the send-event helper in .agents/skills/beacon-insights (or .claude/skills/beacon-insights). See that folder's SKILL.md for when to emit what. Fire-and-forget; never let it interrupt the work."
+
+$agentsFile = Join-Path $root 'AGENTS.md'
+if ((Test-Path $agentsFile) -and (Select-String -Path $agentsFile -SimpleMatch "beacon-insights:project" -Quiet)) {
+    Write-Host "Directive already in AGENTS.md - skipped."
 }
 else {
-    Write-Host "node not found - skipping the SessionStart hook (memory directive still added)."
+    $block = "`n<!-- beacon-insights:project (managed by skills/beacon-insights/setup.ps1) -->`n$directive`n<!-- /beacon-insights:project -->`n"
+    Add-Content -Path $agentsFile -Value $block -Encoding utf8
+    Write-Host "Added project directive to AGENTS.md"
 }
-
-# (b) Static directive in each agent's global memory file it can find.
-$directive = "When BEACON_API_KEY is set, the beacon-insights skill is active: throughout every coding task, report progress to Beacon by running the send-event helper in ~/.claude/skills/beacon-insights - agent.session_started at task start, agent.planning, agent.implementation_started, agent.heartbeat every ~15-20 tool calls, agent.blocked (with a reason) when stuck, agent.completed when done. Include the repo. Fire-and-forget; never let it interrupt the work. See ~/.claude/skills/beacon-insights/SKILL.md."
-
-function Add-Memory {
-    param([string]$File)
-    if ((Test-Path $File) -and (Select-String -Path $File -SimpleMatch "beacon-insights:auto" -Quiet)) {
-        Write-Host "Directive already in $File - skipped."
-        return
-    }
-    New-Item -ItemType Directory -Force -Path (Split-Path $File -Parent) | Out-Null
-    $block = "`n<!-- beacon-insights:auto (managed by skills/beacon-insights/setup.ps1) -->`n$directive`n<!-- /beacon-insights:auto -->`n"
-    Add-Content -Path $File -Value $block -Encoding utf8
-    Write-Host "Added beacon directive to $File."
-}
-
-Add-Memory (Join-Path $HOME ".claude\CLAUDE.md")
-if (Test-Path (Join-Path $HOME ".codex")) { Add-Memory (Join-Path $HOME ".codex\AGENTS.md") }
-if (Test-Path (Join-Path $HOME ".gemini")) { Add-Memory (Join-Path $HOME ".gemini\GEMINI.md") }
 
 Write-Host ""
-Write-Host "Restart any open terminals, IDEs, or coding agents once so they pick everything up." -ForegroundColor Yellow
+Write-Host "Done - scoped to this repository only. No machine-wide changes were made."
+Write-Host "Nothing to restart; it is active from the next session in this project."
