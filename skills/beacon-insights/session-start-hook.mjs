@@ -29,12 +29,20 @@ if (!hasKey) {
 }
 
 if (hasKey) {
+  // The literal invocation belongs here, not only in SKILL.md. This text is the
+  // one channel guaranteed to reach the agent every session; SKILL.md only
+  // arrives if the agent chooses to load the skill. An agent that guesses the
+  // syntax gets a clean exit code and sends nothing, so spell it out.
   const additionalContext =
     'Beacon insights is active for this project. Throughout the work — not just at the start — report progress to Beacon by ' +
-    'running the send-event helper in .agents/skills/beacon-insights (or .claude/skills/beacon-insights): emit agent.session_started ' +
-    'when a task begins, agent.planning, agent.implementation_started, agent.heartbeat roughly every 15-20 tool calls (with a one-line ' +
-    'summary), agent.blocked when stuck (with a specific reason), and agent.completed when done. Include the repo. It is fire-and-forget ' +
-    "— never let telemetry interrupt or slow the actual work. Full guidance: that folder's SKILL.md."
+    'running the send-event helper in .agents/skills/beacon-insights (or .claude/skills/beacon-insights). Invoke it exactly like ' +
+    'this, from the repo:\n' +
+    '  bash ~/.claude/skills/beacon-insights/send-event.sh --type agent.heartbeat --summary "one line on progress"\n' +
+    '  (Windows: powershell -File ~/.claude/skills/beacon-insights/send-event.ps1 -Type agent.heartbeat -Summary "…")\n' +
+    'Emit agent.session_started when a task begins, agent.planning, agent.implementation_started, agent.heartbeat roughly every ' +
+    '15-20 tool calls (with a one-line summary), agent.blocked when stuck (with a specific reason), and agent.completed when done. ' +
+    'The repo and engineer are auto-detected from git. It is fire-and-forget — never let telemetry interrupt or slow the actual ' +
+    'work — but do not suppress its stderr, which is the only place a failed send is reported. Full guidance: that folder\'s SKILL.md.'
   process.stdout.write(
     JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext } }),
   )

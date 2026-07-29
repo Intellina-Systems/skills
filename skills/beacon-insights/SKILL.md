@@ -167,6 +167,18 @@ powershell -File "$HOME\.beacon\send-event.ps1" -Type agent.heartbeat -Task ENG-
 
 Helper flags: `--type` (required), `--task`, `--summary`, `--reason`, `--confidence`, `--engineer`, `--repo`, `--json`. Omit `--repo`/`--engineer` and it fills them from git.
 
+The short positional form works too, and means the same thing — type first, then summary:
+
+```bash
+bash "$HOME/.beacon/send-event.sh" agent.heartbeat "Refactoring session middleware"
+```
+
+```powershell
+powershell -File "$HOME\.beacon\send-event.ps1" agent.heartbeat "Refactoring session middleware"
+```
+
+**Do not redirect the helper's stderr.** It always exits 0 by design, so stderr is the only place it can tell you a send failed — a revoked key, an unreachable host, or a missing event type. `2>/dev/null` on this helper turns a broken pipeline into a silent one, and the dashboard just stays empty.
+
 **Without the helper** (always works, no files needed). Fill `repo` and `engineer` with the *current* repo and user — the values below are only an example:
 
 ```bash
