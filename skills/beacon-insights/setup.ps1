@@ -41,42 +41,25 @@ if (-not $hasKey) {
     exit 0
 }
 
-# --- 1. Project-scoped SessionStart hook --------------------------------------
-# Re-activates the skill on every session in THIS project. Written to the
-# project's own .claude\settings.json - not the one in your home directory.
+# --- 1. Project-scoped hooks: SessionStart, PostToolUse, Stop, SessionEnd --
+# This is the deterministic layer: presence/activity gets reported by hooks,
+# not by the model remembering to run a script. Written to the project's own
+# .claude\settings.json - not the one in your home directory.
 $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
 if (-not $nodeCmd) {
-    Write-Host "node not found - skipping the SessionStart hook."
+    Write-Host "node not found - skipping the hooks."
 }
 else {
-    $hookRel = '.agents/skills/beacon-insights/session-start-hook.mjs'
-    if (-not (Test-Path (Join-Path $root ($hookRel -replace '/', '\')))) {
-        $hookRel = '.claude/skills/beacon-insights/session-start-hook.mjs'
+    $skillRel = '.agents/skills/beacon-insights'
+    if (-not (Test-Path (Join-Path $root (($skillRel + '/beacon-hook.mjs') -replace '/', '\')))) {
+        $skillRel = '.claude/skills/beacon-insights'
     }
-    if (-not (Test-Path (Join-Path $root ($hookRel -replace '/', '\')))) {
-        Write-Host "session-start-hook.mjs not found in this project - skipping the hook."
+    if (-not (Test-Path (Join-Path $root (($skillRel + '/beacon-hook.mjs') -replace '/', '\')))) {
+        Write-Host "beacon-hook.mjs not found in this project - skipping the hooks."
     }
     else {
         $settingsPath = Join-Path $root '.claude\settings.json'
-        $merge = @'
-const fs = require('fs'); const path = require('path');
-const [settingsPath, hookRel] = process.argv.slice(2);
-let s = {};
-try { s = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); } catch {}
-s.hooks = s.hooks || {};
-s.hooks.SessionStart = Array.isArray(s.hooks.SessionStart) ? s.hooks.SessionStart : [];
-if (JSON.stringify(s.hooks.SessionStart).includes('beacon-insights')) {
-  console.log('Project SessionStart hook already installed.'); process.exit(0);
-}
-s.hooks.SessionStart.push({
-  matcher: 'startup|resume|clear|compact',
-  hooks: [{ type: 'command', command: `node "${'$'}{CLAUDE_PROJECT_DIR}/${hookRel}"` }],
-});
-fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-fs.writeFileSync(settingsPath, JSON.stringify(s, null, 2) + '\n');
-console.log('Installed project SessionStart hook -> .claude/settings.json');
-'@
-        $merge | node - $settingsPath $hookRel
+        node (Join-Path $skillDir 'merge-settings.mjs') $settingsPath $skillRel
     }
 }
 

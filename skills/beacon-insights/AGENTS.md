@@ -6,7 +6,11 @@ This file exists because `SKILL.md` uses the Agent Skills format (YAML frontmatt
 
 ## What this is
 
-Beacon is an engineering-intelligence dashboard. It stays accurate only if agents report their own progress as structured events — nobody writes manual status updates. Your job: send a small HTTP event whenever something progress-relevant happens, and periodically even when nothing landmark-y has happened, so a long task doesn't go dark.
+Beacon is an engineering-intelligence dashboard. It stays accurate only if agents report their own progress as structured events — nobody writes manual status updates.
+
+**If you're running under Claude Code and this project has run `setup.sh`/`setup.ps1`**, presence and activity (session start, a heartbeat every ~15-20 tool calls, test results, session end) are reported automatically by hooks — that part no longer depends on you. Your job is narrower: three moments only a model can recognize (see *Event types* below).
+
+**On every other agent platform** (Codex, GitHub Copilot, Gemini CLI, OpenCode, Antigravity), there is no equivalent hook mechanism today, so presence is still best-effort and depends on you: send `agent.session_started` when a task begins, and check in with `agent.heartbeat` at natural checkpoints as the task runs, so a long task doesn't go dark.
 
 **This skill is installed into whatever repo you're working in — it is not tied to any one project.** Report on the work in *this* repo, whatever it happens to be.
 
@@ -73,26 +77,28 @@ Fields: `type` (required, dot-namespaced, see below), `task` (work-item key/id �
 
 ## Event types and when to send them
 
-| Moment | Type |
-|---|---|
-| Task starts | `agent.session_started` |
-| Plan is formed | `agent.planning` |
-| Writing code begins | `agent.implementation_started` |
-| Actively working, no other event fits (see cadence) | `agent.heartbeat` |
-| Tests pass | `agent.tests_passed` |
-| Tests fail | `agent.tests_failed` |
-| Stuck — missing info, failing dependency, needs a human decision | `agent.blocked` (include a specific `reason` — this is the highest-value event, it's what gets surfaced to the team) |
-| Task finished and verified | `agent.completed` |
+| Moment | Type | On Claude Code with hooks installed |
+|---|---|---|
+| Task starts | `agent.session_started` | Sent automatically — you don't need to |
+| Plan is formed | `agent.planning` | Still yours — no hook can see this |
+| Every ~15-20 tool calls | `agent.heartbeat` | Sent automatically — hooks count, not you |
+| Tests pass / fail | `agent.tests_passed` / `agent.tests_failed` | Sent automatically, when detectable |
+| Stuck — missing info, failing dependency, needs a human decision | `agent.blocked`, with a specific `reason` — the highest-value event, it's what gets surfaced to the team | Still yours — hooks never send this. A permission prompt or idle wait isn't a blocker and isn't reported |
+| Task finished and verified | `agent.completed` | Still yours — only you know it's actually done |
 
-## Cadence — keep reporting for the whole task, not just the start
+On any other platform, none of the "sent automatically" column applies — send `agent.session_started`, `agent.heartbeat`, and test results yourself, the same as the three that are always yours.
 
-A task's "session" is however long the task actually takes, including one long conversation that never restarts. Don't stop after the first event:
+## Cadence — three moments, not a tool-call count
 
-1. Send a lifecycle event whenever one of the moments above genuinely happens.
-2. Otherwise, roughly every 15-20 tool calls (or at a natural checkpoint — file saved, build/test run, todo item completed, whichever comes first) while the task is still open, send `agent.heartbeat` with a one-line `summary` of what's currently in flight.
-3. Keep doing this until `agent.completed`. If the same conversation moves on to a new task afterward, start over with a new `agent.session_started`.
+Don't count tool calls. A model can't reliably track its own count, and the count is gone the moment context compacts — this used to be the instruction here and it was the single most fragile part of the whole skill.
 
-Don't send events faster than that cadence — one per lifecycle moment or heartbeat tick, not one per file edit. A `201` response means success; `401` means the key is invalid — tell the user once, then stop sending for the rest of the task.
+1. Send `agent.planning` the moment you've formed a plan.
+2. Send `agent.blocked` the moment you're about to ask the user something you can't resolve yourself — always with a specific `reason`.
+3. Send `agent.completed` once the task is verified done. If the same conversation moves on to a new task afterward, treat it as new — send `agent.session_started` again (on platforms without the hook layer; on Claude Code with hooks installed, that one's automatic).
+
+On platforms without the hook layer, also send `agent.heartbeat` at natural checkpoints while the task is still open — a file saved, a build or test run, a todo item completed — so presence doesn't depend on a single event at the start. There's no target frequency to hit; send it when something happened, not on a schedule.
+
+A `201` response means success; `401` means the key is invalid — tell the user once, then stop sending for the rest of the task.
 
 ## Where this skill lives
 
@@ -102,9 +108,9 @@ Canonical home: **`Intellina-Systems/skills`**, at `skills/beacon-insights/`. In
 npx skills add https://github.com/Intellina-Systems/skills --skill beacon-insights
 ```
 
-That installs the whole folder — `SKILL.md`, both helpers, the hook, and this file — into `.agents/skills/beacon-insights/`, symlinked into each detected agent's skills directory.
+That installs the whole folder — `SKILL.md`, both send-event helpers, `beacon-client.mjs`, the two Claude Code hook scripts (`session-start-hook.mjs`, `beacon-hook.mjs`), `merge-settings.mjs`, and this file — into `.agents/skills/beacon-insights/`, symlinked into each detected agent's skills directory.
 
-`setup.sh` / `setup.ps1` are optional and **strictly project-scoped**: they add a SessionStart hook to `./.claude/settings.json` and one directive line to `./AGENTS.md`, both inside the current repo. They never set OS environment variables, never edit shell profiles, and never write to `~/.claude/settings.json`, `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, or `~/.gemini/GEMINI.md` — that would be machine-wide persistence and cross-agent self-propagation. If you find a copy that does any of that, it is out of date; don't run it.
+`setup.sh` / `setup.ps1` are **recommended on Claude Code, and strictly project-scoped**: they register `SessionStart`, `PostToolUse`, `Stop`, and `SessionEnd` hooks in `./.claude/settings.json` (this is what makes presence/activity reporting deterministic instead of depending on the model) and add one directive line to `./AGENTS.md`, both inside the current repo. They never set OS environment variables, never edit shell profiles, and never write to `~/.claude/settings.json`, `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, or `~/.gemini/GEMINI.md` — that would be machine-wide persistence and cross-agent self-propagation. If you find a copy that does any of that, it is out of date; don't run it. On platforms without a comparable hook system, this step is a no-op — presence there stays best-effort per the *Cadence* section above.
 
 Beacon spreads to another repo exactly one way: someone installs it there on purpose.
 

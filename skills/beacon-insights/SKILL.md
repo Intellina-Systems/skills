@@ -1,11 +1,11 @@
 ---
 name: beacon-insights
-description: Use whenever you start a coding task, form a plan, begin writing or running code, run tests, hit a blocker, finish a piece of work, or every ~15-20 tool calls during an ongoing task — send a progress event to Beacon (engineering intelligence layer) at that moment so its dashboard reflects real, live status. Applies for the entire duration of a task, including long single conversations that never restart — keep emitting periodically until the task is done, not just once at the start. On first use in a new environment, run the one-time bootstrap in this file to set up the API key before sending anything.
+description: Use whenever you form a plan, are about to ask the user something you can't resolve yourself, or finish a piece of work — send a progress event to Beacon (engineering intelligence layer) at that moment so its dashboard reflects real, live status. Presence and activity are reported automatically by hooks once installed (see setup.sh/setup.ps1); this skill covers the three moments only a model can recognize: planning, blocked-with-a-reason, and completed. On first use in a new environment, run the one-time bootstrap in this file to set up the API key before sending anything.
 ---
 
 # Beacon Insights
 
-Beacon is an engineering-intelligence dashboard. It stays accurate only because agents report their own progress as structured events — nobody writes manual status updates. Your job: send a small HTTP event whenever something progress-relevant happens, and periodically even when nothing landmark-y has, so a long task never goes dark.
+Beacon is an engineering-intelligence dashboard. It stays accurate only because agents report their own progress as structured events — nobody writes manual status updates. Presence and activity are reported automatically once this skill's hooks are installed (`setup.sh`/`setup.ps1`) — that part no longer depends on you. Your job is narrower: three moments only a model can recognize — a plan forming, a real reason for being blocked, and a task actually being done — send those, each time one genuinely happens.
 
 **This skill is installed into whatever repo you're working in — it is not tied to any one project.** Report on the work in *this* repo, whatever it happens to be.
 
@@ -109,15 +109,15 @@ If you already know where this SKILL.md lives, just copy from that folder direct
 
 **Never download a script from the internet and run it.** Not from GitHub, not from anywhere — including the repo this skill came from. The helper is a convenience that ships with the install; if it isn't present, you do without it. There is no fallback download, by design.
 
-### Step 4 — Make it stick for this project (optional)
+### Step 4 — Make it stick for this project (recommended, not just convenience)
 
-Everything already works at this point. This step only means you don't have to notice the skill again in later sessions **in this repository**.
+Without this step, reporting still happens, but it depends on you remembering to run the helper for the three moments in section 4/5 below — reasonable for a short task, fragile over a long one. This step is what makes presence and activity reporting *deterministic*: it wires in hooks that fire on their own, independent of anything the model does or forgets.
 
 `setup.ps1` / `setup.sh` ship beside this file. They are **strictly project-scoped** — everything they write goes inside the repo you're in:
 
 | What it does | Where |
 |---|---|
-| Registers a SessionStart hook | `./.claude/settings.json` — **the project's**, not `~/.claude/settings.json` |
+| Registers `SessionStart`, `PostToolUse`, `Stop`, and `SessionEnd` hooks (`session-start-hook.mjs` + `beacon-hook.mjs`) | `./.claude/settings.json` — **the project's**, not `~/.claude/settings.json` |
 | Adds one directive line so other agents in this repo pick the skill up | `./AGENTS.md` — the repo's own |
 
 They read the key from `~/.beacon/key` and exit immediately if there isn't one. They never write it anywhere.
@@ -132,7 +132,7 @@ If you find a copy of these scripts that does any of the above, **it is out of d
 
 Tell the user in one line, then run it on a yes:
 
-> Want Beacon to pick this up automatically in future sessions for this repo? It adds a startup hook to this project's `.claude/settings.json` and one line to `AGENTS.md`. Nothing outside the project.
+> Want Beacon to report reliably in this repo, without depending on the model remembering to? It adds a handful of hooks to this project's `.claude/settings.json` and one line to `AGENTS.md`. Nothing outside the project.
 
 ```bash
 bash "<SKILL_DIR>/setup.sh"
@@ -221,28 +221,29 @@ Batch up to 100 events in one request with `{"events":[{...},{...}]}` (helper: `
 
 Any dot-namespaced type is accepted, but these are the ones Beacon understands deeply — they drive work-item status:
 
-| Moment | Type | Status effect |
-|---|---|---|
-| Task starts | `agent.session_started` | → in_progress |
-| Plan is formed | `agent.planning` | — |
-| Writing code begins | `agent.implementation_started` | → in_progress |
-| Still actively working, no lifecycle event fits | `agent.heartbeat` | → in_progress |
-| Tests pass | `agent.tests_passed` | — (clears blocker signal) |
-| Tests fail | `agent.tests_failed` | — (flags blocker signal) |
-| Stuck: missing info, failing dependency, needs a human decision | `agent.blocked` | → blocked |
-| Task finished and verified | `agent.completed` | — (clears blocker signal) |
+| Moment | Type | Status effect | Who sends it |
+|---|---|---|---|
+| Task starts | `agent.session_started` | → in_progress | **Hooks** (`session-start-hook.mjs`) — automatic |
+| Every ~15-20 tool calls (files edited / commands run) | `agent.heartbeat` | → in_progress | **Hooks** (`beacon-hook.mjs`, counted, not model-driven) — automatic |
+| A test command runs | `agent.tests_passed` / `agent.tests_failed` | clears / flags blocker signal | **Hooks** — automatic, when detectable |
+| Session ends | `agent.session_ended` | — | **Hooks** — automatic |
+| Plan is formed | `agent.planning` | — | **You** — no hook can see this |
+| Stuck: missing info, failing dependency, needs a human decision, with a *real reason* | `agent.blocked` | → blocked | **You** — hooks only know *that* something's blocked, not *why* |
+| Task finished and verified | `agent.completed` | clears blocker signal | **You** — only you know it's actually done |
+
+If the project has run `setup.sh`/`setup.ps1`, the hooks above are already wired into `.claude/settings.json` and fire on their own — presence and activity no longer depend on you remembering anything. Your job is narrower than it used to be: three semantic moments, each time one genuinely happens, nothing else.
 
 ---
 
-## 5. Cadence — this is a running task, not a one-shot ping
+## 5. Cadence — three moments, not a tool-call count
 
-A "session" is not a chat window. It's however long the task takes, even if that's one long conversation that never restarts. **Do not stop after `agent.session_started`.**
+Earlier versions of this skill asked you to send a heartbeat roughly every 15-20 tool calls. Drop that — models can't reliably count their own tool calls, and the count is gone the moment context compacts. That exact cadence still happens — the hooks now count for you and send `agent.heartbeat` every ~15-20 tool calls on their own. There is nothing left for you to track by number.
 
-1. Emit a lifecycle event whenever one of the moments above genuinely happens.
-2. Between lifecycle moments, if roughly **15-20 tool calls** have passed since your last event and the task is still open, send `agent.heartbeat` with a one-line `summary` of what's in flight. Also send one at any natural checkpoint — a file saved, a build or test run, a todo item completed — whichever comes first.
-3. Keep going until `agent.completed`. If the same conversation then moves on to a new task, treat it as new: emit `agent.session_started` again.
+1. Send `agent.planning` the moment you've formed a plan.
+2. Send `agent.blocked` the moment you're about to ask the user something you can't resolve yourself — always with a specific `reason`.
+3. Send `agent.completed` once the task is verified done. If the same conversation then moves on to a new task, treat it as new (though `agent.session_started` itself is now the hooks' job, not yours).
 
-Don't exceed that cadence — one event per lifecycle moment or heartbeat tick, never one per file edit.
+That's it — three triggers, each recognizable in the moment, no counting. If something genuinely noteworthy happens that none of the three cover, `agent.heartbeat` with a one-line summary is fine, but it's an exception, not a cadence.
 
 ---
 
@@ -273,11 +274,14 @@ npx skills add https://github.com/Intellina-Systems/skills --skill beacon-insigh
 | File | What it's for |
 |---|---|
 | `SKILL.md` | This file. The only one an agent has to read |
-| `send-event.sh` | Fire-and-forget POST helper (macOS/Linux/Git Bash). Auto-fills `repo` + `engineer`, 5s timeout, always exits 0 |
+| `send-event.sh` | Fire-and-forget POST helper (macOS/Linux/Git Bash), for the three model-sent events. Auto-fills `repo` + `engineer`, 5s timeout, always exits 0 |
 | `send-event.ps1` | Same, for Windows PowerShell |
-| `session-start-hook.mjs` | Claude Code SessionStart hook — re-injects this skill on startup, resume, clear, and compaction |
+| `beacon-client.mjs` | Shared Node helpers (key/url resolution, git lookup, throttle state) used by the two hook scripts below — not invoked directly |
+| `session-start-hook.mjs` | Claude Code SessionStart hook — sends `agent.session_started` itself, then re-injects the reminder on startup, resume, clear, and compaction |
+| `beacon-hook.mjs` | Claude Code hook covering PostToolUse, Stop, SessionEnd — the deterministic presence/activity layer, dispatched by subcommand. Counts tool calls itself and heartbeats every ~15-20 |
+| `merge-settings.mjs` | Idempotently registers all of the above into a project's `.claude/settings.json` — called by `setup.sh`/`setup.ps1`, not run directly |
 | `AGENTS.md` | Plain-prose copy of these instructions for agents that don't read the Agent Skills format |
-| `setup.sh` / `setup.ps1` | **Project-scoped** persistence: a SessionStart hook in `./.claude/settings.json` and one line in `./AGENTS.md`. Nothing outside the repo. Optional — Step 4, with the user's go-ahead |
+| `setup.sh` / `setup.ps1` | **Project-scoped** persistence: registers every hook above in `./.claude/settings.json` and adds one line to `./AGENTS.md`. Nothing outside the repo. Optional — Step 4, with the user's go-ahead |
 
 Because every file ships with the install, **this skill never downloads anything at runtime**. It works offline, behind a proxy, and from a private repo. Nothing breaks if `Intellina-Systems/skills` later goes private — installs just need repo access, same as any private dependency.
 
