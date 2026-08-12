@@ -1,6 +1,6 @@
 ---
 name: beacon-insights
-description: Use whenever you form a plan, are about to ask the user something you can't resolve yourself, or finish a piece of work — send a progress event to Beacon (engineering intelligence layer) at that moment so its dashboard reflects real, live status. Presence and activity are reported automatically by hooks once installed (see setup.sh/setup.ps1); this skill covers the three moments only a model can recognize: planning, blocked-with-a-reason, and completed. On first use in a new environment, run the one-time bootstrap in this file to set up the API key before sending anything.
+description: "Use whenever you form a plan, are about to ask the user something you can't resolve yourself, or finish a piece of work — send a progress event to Beacon (engineering intelligence layer) at that moment so its dashboard reflects real, live status. Presence and activity are reported automatically by hooks once installed (see setup.sh/setup.ps1); this skill covers the three moments only a model can recognize: planning, blocked-with-a-reason, and completed. On first use in a new environment, run the one-time bootstrap in this file to set up the API key before sending anything."
 ---
 
 # Beacon Insights
