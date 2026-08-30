@@ -23,6 +23,7 @@
 
 import { readFileSync } from 'node:fs'
 import { hasKey, isDisabled, getGitInfo, postEvent, readSessionState, writeSessionState, cap } from './beacon-client.mjs'
+import { resolveSignature } from './agent-signature.mjs'
 
 const TOOL_CALL_THRESHOLD = 18 // heartbeat every ~15-20 tool calls, counted here instead of by the model
 
@@ -77,7 +78,11 @@ async function loadContext() {
   if (!sessionId) return null // nothing to correlate against — not worth guessing an id
   const cwd = input.cwd || process.cwd()
   const { repo, engineer, task } = getGitInfo(cwd)
-  return { input, sessionId, cwd, repo, engineer, task, state: readSessionState(sessionId) }
+  // Resolved once per hook invocation rather than per event — it costs one
+  // bounded read of the session transcript, and both event paths below want
+  // the same answer.
+  const signature = resolveSignature({ input, sessionId })
+  return { input, sessionId, cwd, repo, engineer, task, signature, state: readSessionState(sessionId) }
 }
 
 // One heartbeat (or test result, if one ran this window) per crossing of the
@@ -98,6 +103,7 @@ async function flushHeartbeat(ctx) {
     engineer: cap(ctx.engineer, 128),
     task: ctx.task,
     summary: cap(deriveSummary(state), 500),
+    ...ctx.signature,
     externalId: `bcn:${sessionId}:heartbeat:${state.heartbeatSeq}`,
   })
   if (sent) {
@@ -159,6 +165,7 @@ async function handleSessionEnd(ctx) {
     engineer: cap(ctx.engineer, 128),
     task: ctx.task,
     summary: `Session ended (${reason})`,
+    ...ctx.signature,
     externalId: `bcn:${sessionId}:session-end`,
   })
 }

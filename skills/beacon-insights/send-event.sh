@@ -11,6 +11,10 @@
 #   bash send-event.sh --type agent.blocked --task BCN-42 \
 #     --reason "API schema mismatch" --summary "Stuck on auth" --confidence 0.9
 #
+# The agent signature (which model, which harness) is detected automatically —
+# see the block below. Override it with --model/--harness, or BEACON_MODEL/
+# BEACON_HARNESS, for a harness this doesn't recognise.
+#
 # Usage (full JSON body — you control everything, incl. batches):
 #   bash send-event.sh --json '{"type":"agent.heartbeat","summary":"…"}'
 #   bash send-event.sh --json '{"events":[{...},{...}]}'
@@ -34,6 +38,7 @@ BEACON_URL="${BEACON_URL:-https://beacon-tool.vercel.app}"
 BEACON_URL="${BEACON_URL%/}" # tolerate a trailing slash
 
 TYPE="" TASK="" SUMMARY="" REASON="" CONFIDENCE="" ENGINEER="" REPO="" JSON=""
+MODEL="${BEACON_MODEL:-}" HARNESS="${BEACON_HARNESS:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --type) TYPE="$2"; shift 2 ;;
@@ -43,6 +48,8 @@ while [ $# -gt 0 ]; do
     --confidence) CONFIDENCE="$2"; shift 2 ;;
     --engineer) ENGINEER="$2"; shift 2 ;;
     --repo) REPO="$2"; shift 2 ;;
+    --model) MODEL="$2"; shift 2 ;;
+    --harness) HARNESS="$2"; shift 2 ;;
     --json) JSON="$2"; shift 2 ;;
     # Bare words: accept the shape callers actually reach for,
     # `send-event.sh <type> "<summary>"`. The first one is only taken as the
@@ -79,6 +86,51 @@ if [ -z "$ENGINEER" ]; then
   [ -z "$ENGINEER" ] && ENGINEER="$(git config user.email 2>/dev/null || true)"
 fi
 
+# --- agent signature: which model did the work, inside which harness --------
+# The same contract agent-signature.mjs implements for the hook path, done with
+# the tools a bare shell has. Every step is allowed to find nothing: an absent
+# field is honest, a guessed one becomes a category on the dashboard that
+# nobody meant to create.
+
+if [ -z "$HARNESS" ]; then
+  # Best-effort environment fingerprints, most specific first. A harness that
+  # isn't here resolves to nothing and the user sets BEACON_HARNESS — that
+  # escape hatch is why the list can afford to be incomplete.
+  if [ -n "${CLAUDECODE:-}${CLAUDE_CODE_ENTRYPOINT:-}" ]; then HARNESS="claude-code"
+  elif [ -n "${CURSOR_TRACE_ID:-}${CURSOR_AGENT:-}" ]; then HARNESS="cursor"
+  elif [ -n "${CODEX_HOME:-}${CODEX_SANDBOX:-}" ]; then HARNESS="codex"
+  elif [ -n "${GEMINI_CLI:-}${GEMINI_SANDBOX:-}" ]; then HARNESS="gemini-cli"
+  elif [ -n "${AIDER_MODEL:-}${AIDER_CHAT_HISTORY_FILE:-}" ]; then HARNESS="aider"
+  elif [ -n "${COPILOT_AGENT:-}${GITHUB_COPILOT_CLI:-}" ]; then HARNESS="copilot"
+  elif [ -n "${WINDSURF_SESSION_ID:-}${WINDSURF_USER:-}" ]; then HARNESS="windsurf"
+  elif [ -n "${CLINE_SESSION_ID:-}" ]; then HARNESS="cline"
+  elif [ -n "${OPENCODE_SESSION_ID:-}${OPENCODE_BIN:-}" ]; then HARNESS="opencode"
+  elif [ -n "${AMP_THREAD_ID:-}" ]; then HARNESS="amp"
+  elif [ -n "${REPLIT_AGENT:-}${REPL_ID:-}" ]; then HARNESS="replit"
+  elif [ -n "${DEVIN_SESSION_ID:-}" ]; then HARNESS="devin"
+  elif [ -n "${AI_AGENT:-}" ]; then
+    # Generic descriptor, shaped `<name>_<dashed-version>_agent`. Take the name
+    # when it matches that shape; otherwise the whole value, unparsed.
+    HARNESS="$(printf '%s' "$AI_AGENT" | sed -nE 's/^([a-zA-Z0-9-]+)_[0-9-]+_agent$/\1/p')"
+    [ -z "$HARNESS" ] && HARNESS="$AI_AGENT"
+  fi
+fi
+
+# The transcript is the only place the model id appears — nothing exports it.
+# Read a bounded tail (these files reach tens of megabytes) and take the most
+# recent match, so a model switched mid-session is picked up rather than stale.
+# Opened for its own "model" field only; no message content is read. The <
+# exclusion drops Claude Code's synthetic-turn placeholder ("<synthetic>"),
+# which is not a model anyone chose.
+SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}"
+if [ -z "$MODEL" ] && [ -n "$SESSION_ID" ]; then
+  for t in "$HOME"/.claude/projects/*/"$SESSION_ID".jsonl; do
+    [ -f "$t" ] || continue
+    MODEL="$(tail -c 262144 "$t" 2>/dev/null | grep -oE '"model":"[^"<]+"' | tail -1 | cut -d'"' -f4)"
+    break
+  done
+fi
+
 json_escape() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e ':a;N;$!ba;s/\n/\\n/g'; }
 
 if [ -n "$JSON" ]; then
@@ -96,6 +148,13 @@ else
   [ -n "$SUMMARY" ] && BODY="$BODY,\"summary\":\"$(json_escape "$SUMMARY")\""
   [ -n "$REASON" ] && BODY="$BODY,\"reason\":\"$(json_escape "$REASON")\""
   [ -n "$REPO" ] && BODY="$BODY,\"repo\":\"$(json_escape "$REPO")\""
+  [ -n "$MODEL" ] && BODY="$BODY,\"model\":\"$(json_escape "$MODEL")\""
+  [ -n "$HARNESS" ] && BODY="$BODY,\"harness\":\"$(json_escape "$HARNESS")\""
+  # Tags this as the model-authored path and joins it to the same session
+  # timeline the hooks report on. Without these, agent.planning/blocked/
+  # completed sit unattached beside the heartbeats they belong with.
+  BODY="$BODY,\"instrumentation\":\"model\""
+  [ -n "$SESSION_ID" ] && BODY="$BODY,\"sessionId\":\"$(json_escape "$SESSION_ID")\""
   case "$CONFIDENCE" in
     '' ) ;;
     *[!0-9.]* ) ;; # not numeric — skip

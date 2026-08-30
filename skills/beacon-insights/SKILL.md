@@ -165,7 +165,7 @@ bash "$HOME/.beacon/send-event.sh" --type agent.heartbeat --task ENG-42 \
 powershell -File "$HOME\.beacon\send-event.ps1" -Type agent.heartbeat -Task ENG-42 -Summary "Refactoring session middleware"
 ```
 
-Helper flags: `--type` (required), `--task`, `--summary`, `--reason`, `--confidence`, `--engineer`, `--repo`, `--json`. Omit `--repo`/`--engineer` and it fills them from git.
+Helper flags: `--type` (required), `--task`, `--summary`, `--reason`, `--confidence`, `--engineer`, `--repo`, `--model`, `--harness`, `--json`. Omit `--repo`/`--engineer` and it fills them from git; omit `--model`/`--harness` and it detects them (see section 3).
 
 The short positional form works too, and means the same thing — type first, then summary:
 
@@ -214,6 +214,20 @@ Batch up to 100 events in one request with `{"events":[{...},{...}]}` (helper: `
 | `occurredAt` | no | ISO timestamp, defaults to now |
 | `externalId` | no | Stable id for deduplication — same source + `externalId` is ingested once |
 | `payload` | no | Arbitrary JSON object for extra structured detail |
+| `model` | no | The model doing the work, as the provider's own id, e.g. `"claude-opus-5"`. **Auto-detected — don't set it by hand** |
+| `harness` | no | The tool it's running inside, e.g. `"claude-code"`, `"cursor"`, `"codex"`. Auto-detected |
+| `harnessVersion` | no | That tool's version, e.g. `"2.1.251"`. Auto-detected |
+
+### The agent signature
+
+The last three are Beacon's answer to *which model actually did this work, and where* — the dimension that separates an Opus session in Claude Code from a Sonnet session in Cursor once both are rows on the same dashboard.
+
+**You never fill them in.** Both the helper and the hooks work them out themselves: the harness from the environment, the model from the session transcript (its `model` field only — no message content is read). Anything they can't determine is left out rather than guessed, because a placeholder like `"unknown"` becomes a category on the dashboard nobody meant to create.
+
+Two cases where you do intervene, both rare:
+
+- **A harness the detection doesn't recognise** — set `BEACON_HARNESS` (and `BEACON_MODEL` if you know it) in the environment, or pass `--model`/`--harness`. The detection list is best-effort and deliberately incomplete; this is the escape hatch.
+- **You know the id is wrong** — an explicit flag or env var always wins over detection.
 
 ---
 
@@ -277,6 +291,7 @@ npx skills add https://github.com/Intellina-Systems/skills --skill beacon-insigh
 | `send-event.sh` | Fire-and-forget POST helper (macOS/Linux/Git Bash), for the three model-sent events. Auto-fills `repo` + `engineer`, 5s timeout, always exits 0 |
 | `send-event.ps1` | Same, for Windows PowerShell |
 | `beacon-client.mjs` | Shared Node helpers (key/url resolution, git lookup, throttle state) used by the two hook scripts below — not invoked directly |
+| `agent-signature.mjs` | Works out the model / harness / harness version for the hook path, from the environment and the session transcript. Never invoked directly; the shell helpers implement the same contract themselves, since they have to run without Node |
 | `session-start-hook.mjs` | Claude Code SessionStart hook — sends `agent.session_started` itself, then re-injects the reminder on startup, resume, clear, and compaction |
 | `beacon-hook.mjs` | Claude Code hook covering PostToolUse, Stop, SessionEnd — the deterministic presence/activity layer, dispatched by subcommand. Counts tool calls itself and heartbeats every ~15-20 |
 | `merge-settings.mjs` | Idempotently registers all of the above into a project's `.claude/settings.json` — called by `setup.sh`/`setup.ps1`, not run directly |

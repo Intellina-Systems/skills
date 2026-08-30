@@ -75,6 +75,14 @@ Batch up to 100 events per request with `{ "events": [ {...}, {...} ] }`. Fire-a
 
 Fields: `type` (required, dot-namespaced, see below), `task` (work-item key/id — infer from branch name, ticket reference, or commit messages), `engineer` (name/email/git login), `repo` (the repo you're working in right now, as `org/name` — the helper auto-fills it; always send it), `summary` (≤500 chars), `reason` (≤2000 chars, for blockers/failures — what's wrong and what would fix it), `confidence` (0–1), `occurredAt` (ISO timestamp), `externalId` (for dedup), `payload` (extra JSON). Never put secrets, API keys, tokens, or sensitive file contents in any of these — and never echo or print the Beacon key itself.
 
+### The agent signature — `model`, `harness`, `harnessVersion`
+
+Three more fields record *which model did this work, and where*: `model` is the provider's own id (`"claude-opus-5"`, `"gpt-5"`), `harness` the tool it ran inside (`"claude-code"`, `"cursor"`, `"codex"`), `harnessVersion` that tool's version. Without them, every agent's work looks identical on the dashboard.
+
+**Don't fill these in by hand.** The helper detects them — the harness from environment variables, the model from the session transcript where one exists. Whatever it can't determine it leaves out, deliberately: an absent field is honest, and a placeholder like `"unknown"` becomes a category nobody meant to create.
+
+If you're on a platform the detection doesn't recognise (it's a best-effort list), either export `BEACON_HARNESS` and `BEACON_MODEL`, or pass `--model` / `--harness` to the helper — an explicit value always wins. If you're POSTing with `curl` instead of the helper, set them yourself the same way, and only with values you actually know.
+
 ## Event types and when to send them
 
 | Moment | Type | On Claude Code with hooks installed |
@@ -108,7 +116,7 @@ Canonical home: **`Intellina-Systems/skills`**, at `skills/beacon-insights/`. In
 npx skills add https://github.com/Intellina-Systems/skills --skill beacon-insights
 ```
 
-That installs the whole folder — `SKILL.md`, both send-event helpers, `beacon-client.mjs`, the two Claude Code hook scripts (`session-start-hook.mjs`, `beacon-hook.mjs`), `merge-settings.mjs`, and this file — into `.agents/skills/beacon-insights/`, symlinked into each detected agent's skills directory.
+That installs the whole folder — `SKILL.md`, both send-event helpers, `beacon-client.mjs`, `agent-signature.mjs`, the two Claude Code hook scripts (`session-start-hook.mjs`, `beacon-hook.mjs`), `merge-settings.mjs`, and this file — into `.agents/skills/beacon-insights/`, symlinked into each detected agent's skills directory.
 
 `setup.sh` / `setup.ps1` are **recommended on Claude Code, and strictly project-scoped**: they register `SessionStart`, `PostToolUse`, `Stop`, and `SessionEnd` hooks in `./.claude/settings.json` (this is what makes presence/activity reporting deterministic instead of depending on the model) and add one directive line to `./AGENTS.md`, both inside the current repo. They never set OS environment variables, never edit shell profiles, and never write to `~/.claude/settings.json`, `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, or `~/.gemini/GEMINI.md` — that would be machine-wide persistence and cross-agent self-propagation. If you find a copy that does any of that, it is out of date; don't run it. On platforms without a comparable hook system, this step is a no-op — presence there stays best-effort per the *Cadence* section above.
 

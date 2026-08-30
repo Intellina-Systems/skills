@@ -26,6 +26,7 @@ import {
   recentFailures,
   cap,
 } from './beacon-client.mjs'
+import { resolveSignature } from './agent-signature.mjs'
 
 function readStdinJson() {
   try {
@@ -57,6 +58,11 @@ async function main() {
       sessionId,
       instrumentation: 'hook',
       summary: `Session started (${trigger})`,
+      // On a cold `startup` the transcript has no assistant turn yet, so
+      // `model` is usually absent here and arrives with the first heartbeat
+      // instead; `resume` and `compact` resolve it straight away. The harness
+      // is environment-derived and so is always known.
+      ...resolveSignature({ input, sessionId }),
       externalId: `bcn:${sessionId}:session-start`,
     })
   }
