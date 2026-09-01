@@ -7,7 +7,7 @@ Usage (positional - the short form most callers reach for):
   powershell -File send-event.ps1 agent.heartbeat "Refactoring session middleware"
 
 Usage (flags):
-  powershell -File send-event.ps1 -Type agent.blocked -Task BCN-42 -Reason "..." -Summary "..." -Confidence 0.9
+  powershell -File send-event.ps1 -Type agent.planning -Task BCN-42 -Summary "..." -Confidence 0.9
 
 The agent signature (which model, which harness) is detected automatically.
 Override it with -Model/-Harness, or $env:BEACON_MODEL / $env:BEACON_HARNESS,
@@ -171,8 +171,8 @@ else {
   if ($Model) { $obj.model = $Model }
   if ($Harness) { $obj.harness = $Harness }
   # Tags this as the model-authored path and joins it to the same session
-  # timeline the hooks report on. Without these, agent.planning/blocked/
-  # completed sit unattached beside the heartbeats they belong with.
+  # timeline the hooks report on. Without these, agent.planning/completed
+  # sit unattached beside the heartbeats they belong with.
   $obj.instrumentation = 'model'
   if ($SessionId) { $obj.sessionId = $SessionId }
   $c = 0.0

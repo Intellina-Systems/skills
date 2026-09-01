@@ -73,7 +73,7 @@ Get `repo` and `engineer` for the repo you're actually in with `git remote get-u
 
 Batch up to 100 events per request with `{ "events": [ {...}, {...} ] }`. Fire-and-forget: if it fails, drop it silently, don't retry in a loop, don't surface the failure to the user, don't let it interrupt real work.
 
-Fields: `type` (required, dot-namespaced, see below), `task` (work-item key/id — infer from branch name, ticket reference, or commit messages), `engineer` (name/email/git login), `repo` (the repo you're working in right now, as `org/name` — the helper auto-fills it; always send it), `summary` (≤500 chars), `reason` (≤2000 chars, for blockers/failures — what's wrong and what would fix it), `confidence` (0–1), `occurredAt` (ISO timestamp), `externalId` (for dedup), `payload` (extra JSON). Never put secrets, API keys, tokens, or sensitive file contents in any of these — and never echo or print the Beacon key itself.
+Fields: `type` (required, dot-namespaced, see below), `task` (work-item key/id — infer from branch name, ticket reference, or commit messages), `engineer` (name/email/git login), `repo` (the repo you're working in right now, as `org/name` — the helper auto-fills it; always send it), `summary` (≤500 chars), `reason` (≤2000 chars, for failures — what's wrong and what would fix it), `confidence` (0–1), `occurredAt` (ISO timestamp), `externalId` (for dedup), `payload` (extra JSON). Never put secrets, API keys, tokens, or sensitive file contents in any of these — and never echo or print the Beacon key itself.
 
 ### The agent signature — `model`, `harness`, `harnessVersion`
 
@@ -91,7 +91,6 @@ If you're on a platform the detection doesn't recognise (it's a best-effort list
 | Plan is formed | `agent.planning` | Still yours — no hook can see this |
 | Every ~15-20 tool calls | `agent.heartbeat` | Sent automatically — hooks count, not you |
 | Tests pass / fail | `agent.tests_passed` / `agent.tests_failed` | Sent automatically, when detectable |
-| Stuck — missing info, failing dependency, needs a human decision | `agent.blocked`, with a specific `reason` — the highest-value event, it's what gets surfaced to the team | Still yours — hooks never send this. A permission prompt or idle wait isn't a blocker and isn't reported |
 | Task finished and verified | `agent.completed` | Still yours — only you know it's actually done |
 
 On any other platform, none of the "sent automatically" column applies — send `agent.session_started`, `agent.heartbeat`, and test results yourself, the same as the three that are always yours.
@@ -101,8 +100,7 @@ On any other platform, none of the "sent automatically" column applies — send 
 Don't count tool calls. A model can't reliably track its own count, and the count is gone the moment context compacts — this used to be the instruction here and it was the single most fragile part of the whole skill.
 
 1. Send `agent.planning` the moment you've formed a plan.
-2. Send `agent.blocked` the moment you're about to ask the user something you can't resolve yourself — always with a specific `reason`.
-3. Send `agent.completed` once the task is verified done. If the same conversation moves on to a new task afterward, treat it as new — send `agent.session_started` again (on platforms without the hook layer; on Claude Code with hooks installed, that one's automatic).
+2. Send `agent.completed` once the task is verified done. If the same conversation moves on to a new task afterward, treat it as new — send `agent.session_started` again (on platforms without the hook layer; on Claude Code with hooks installed, that one's automatic).
 
 On platforms without the hook layer, also send `agent.heartbeat` at natural checkpoints while the task is still open — a file saved, a build or test run, a todo item completed — so presence doesn't depend on a single event at the start. There's no target frequency to hit; send it when something happened, not on a schedule.
 

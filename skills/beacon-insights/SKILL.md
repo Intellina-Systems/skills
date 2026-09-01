@@ -1,11 +1,11 @@
 ---
 name: beacon-insights
-description: "Use whenever you form a plan, are about to ask the user something you can't resolve yourself, or finish a piece of work — send a progress event to Beacon (engineering intelligence layer) at that moment so its dashboard reflects real, live status. Presence and activity are reported automatically by hooks once installed (see setup.sh/setup.ps1); this skill covers the three moments only a model can recognize: planning, blocked-with-a-reason, and completed. On first use in a new environment, run the one-time bootstrap in this file to set up the API key before sending anything."
+description: "Use whenever you form a plan or finish a piece of work — send a progress event to Beacon (engineering intelligence layer) at that moment so its dashboard reflects real, live status. Presence and activity are reported automatically by hooks once installed (see setup.sh/setup.ps1); this skill covers the two moments only a model can recognize: planning and completed. On first use in a new environment, run the one-time bootstrap in this file to set up the API key before sending anything."
 ---
 
 # Beacon Insights
 
-Beacon is an engineering-intelligence dashboard. It stays accurate only because agents report their own progress as structured events — nobody writes manual status updates. Presence and activity are reported automatically once this skill's hooks are installed (`setup.sh`/`setup.ps1`) — that part no longer depends on you. Your job is narrower: three moments only a model can recognize — a plan forming, a real reason for being blocked, and a task actually being done — send those, each time one genuinely happens.
+Beacon is an engineering-intelligence dashboard. It stays accurate only because agents report their own progress as structured events — nobody writes manual status updates. Presence and activity are reported automatically once this skill's hooks are installed (`setup.sh`/`setup.ps1`) — that part no longer depends on you. Your job is narrower: two moments only a model can recognize — a plan forming and a task actually being done — send those, each time one genuinely happens.
 
 **This skill is installed into whatever repo you're working in — it is not tied to any one project.** Report on the work in *this* repo, whatever it happens to be.
 
@@ -185,7 +185,7 @@ powershell -File "$HOME\.beacon\send-event.ps1" agent.heartbeat "Refactoring ses
 curl -sS --max-time 5 -X POST "${BEACON_URL:-$(cat "$HOME/.beacon/url" 2>/dev/null || echo https://beacon-tool.vercel.app)}/api/events" \
   -H "Authorization: Bearer ${BEACON_API_KEY:-$(cat "$HOME/.beacon/key" 2>/dev/null)}" \
   -H "Content-Type: application/json" \
-  -d '{"type":"agent.blocked","task":"ENG-42","engineer":"jane","repo":"acme/web-app","reason":"API schema mismatch between client and server","confidence":0.92}' \
+  -d '{"type":"agent.planning","task":"ENG-42","engineer":"jane","repo":"acme/web-app","summary":"Reworking the ingest path","confidence":0.92}' \
   >/dev/null 2>&1 || true
 ```
 
@@ -204,12 +204,12 @@ Batch up to 100 events in one request with `{"events":[{...},{...}]}` (helper: `
 
 | Field | Required | Notes |
 |---|---|---|
-| `type` | yes | Dot-namespaced, lowercase, e.g. `agent.blocked` (see section 4) |
+| `type` | yes | Dot-namespaced, lowercase, e.g. `agent.planning` (see section 4) |
 | `task` | no | Work-item key or id, e.g. `"ENG-42"` — how Beacon correlates the event to a work item. Infer from the branch name, a ticket reference in the task description, or commit messages |
 | `engineer` | no | Who's working: name, email, GitHub login, or alias. Use the git user of the current repo |
 | `repo` | no | The repo you are working in right now, as `org/name`, e.g. `"acme/web-app"`. **Always send it** — it's how Beacon separates work across projects |
 | `summary` | no | One line, ≤500 chars. Auto-generated from type/task/reason if omitted |
-| `reason` | no | ≤2000 chars. For blockers and failures: what went wrong and what would unblock it |
+| `reason` | no | ≤2000 chars. For failures: what went wrong and what would fix it |
 | `confidence` | no | 0–1, how sure you are about the insight |
 | `occurredAt` | no | ISO timestamp, defaults to now |
 | `externalId` | no | Stable id for deduplication — same source + `externalId` is ingested once |
@@ -239,11 +239,10 @@ Any dot-namespaced type is accepted, but these are the ones Beacon understands d
 |---|---|---|---|
 | Task starts | `agent.session_started` | → in_progress | **Hooks** (`session-start-hook.mjs`) — automatic |
 | Every ~15-20 tool calls (files edited / commands run) | `agent.heartbeat` | → in_progress | **Hooks** (`beacon-hook.mjs`, counted, not model-driven) — automatic |
-| A test command runs | `agent.tests_passed` / `agent.tests_failed` | clears / flags blocker signal | **Hooks** — automatic, when detectable |
+| A test command runs | `agent.tests_passed` / `agent.tests_failed` | — | **Hooks** — automatic, when detectable |
 | Session ends | `agent.session_ended` | — | **Hooks** — automatic |
 | Plan is formed | `agent.planning` | — | **You** — no hook can see this |
-| Stuck: missing info, failing dependency, needs a human decision, with a *real reason* | `agent.blocked` | → blocked | **You** — hooks only know *that* something's blocked, not *why* |
-| Task finished and verified | `agent.completed` | clears blocker signal | **You** — only you know it's actually done |
+| Task finished and verified | `agent.completed` | → done | **You** — only you know it's actually done |
 
 If the project has run `setup.sh`/`setup.ps1`, the hooks above are already wired into `.claude/settings.json` and fire on their own — presence and activity no longer depend on you remembering anything. Your job is narrower than it used to be: three semantic moments, each time one genuinely happens, nothing else.
 
@@ -254,8 +253,7 @@ If the project has run `setup.sh`/`setup.ps1`, the hooks above are already wired
 Earlier versions of this skill asked you to send a heartbeat roughly every 15-20 tool calls. Drop that — models can't reliably count their own tool calls, and the count is gone the moment context compacts. That exact cadence still happens — the hooks now count for you and send `agent.heartbeat` every ~15-20 tool calls on their own. There is nothing left for you to track by number.
 
 1. Send `agent.planning` the moment you've formed a plan.
-2. Send `agent.blocked` the moment you're about to ask the user something you can't resolve yourself — always with a specific `reason`.
-3. Send `agent.completed` once the task is verified done. If the same conversation then moves on to a new task, treat it as new (though `agent.session_started` itself is now the hooks' job, not yours).
+2. Send `agent.completed` once the task is verified done. If the same conversation then moves on to a new task, treat it as new (though `agent.session_started` itself is now the hooks' job, not yours).
 
 That's it — three triggers, each recognizable in the moment, no counting. If something genuinely noteworthy happens that none of the three cover, `agent.heartbeat` with a one-line summary is fine, but it's an exception, not a cadence.
 
@@ -266,7 +264,6 @@ That's it — three triggers, each recognizable in the moment, no counting. If s
 - **Fire-and-forget.** If a send fails, drop it silently. Never retry in a loop, never surface the failure to the user, never let telemetry interrupt, delay, or degrade the actual work.
 - **No secrets, ever.** Never put API keys, tokens, credentials, `.env` contents, or sensitive file contents in `summary`, `reason`, or `payload`. Never echo, `cat`, or print the Beacon key itself — resolve it through `$(cat …)` substitution only.
 - **Summaries describe work, not content.** One line about what you're doing, never a dump of the code or data you're doing it to.
-- **`agent.blocked` is the highest-value event.** Always include a specific `reason`: what is blocking, and what would unblock it. This is what gets surfaced to the team.
 - **Always include `task`** when you can identify one. Uncorrelated events are far less useful.
 - **Responses:** `201` with `{"inserted":…,"deduplicated":…}` means success. `401` means the key is invalid — tell the user once, then stop emitting for the rest of the task. Anything else, ignore.
 - **No key, no noise.** If no key is configured and the user hasn't been asked yet, run the bootstrap. If they declined (`~/.beacon/disabled`), stay silent forever.

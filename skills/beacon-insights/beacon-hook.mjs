@@ -15,8 +15,8 @@
 // Derived means derived: summaries here are assembled from tool metadata and
 // git state, never from free-text model output, specifically so this file
 // can never leak a code snippet or file content into a heartbeat. The richer,
-// model-authored narrative (agent.planning, a real agent.blocked reason,
-// agent.completed) is a separate, complementary path — see SKILL.md — not
+// model-authored narrative (agent.planning, agent.completed) is a
+// separate, complementary path — see SKILL.md — not
 // something this script tries to replace.
 //
 // Usage: node beacon-hook.mjs <tool|stop|session-end>

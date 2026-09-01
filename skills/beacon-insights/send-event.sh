@@ -8,8 +8,8 @@
 #   bash send-event.sh agent.heartbeat "Refactoring session middleware"
 #
 # Usage (flags):
-#   bash send-event.sh --type agent.blocked --task BCN-42 \
-#     --reason "API schema mismatch" --summary "Stuck on auth" --confidence 0.9
+#   bash send-event.sh --type agent.planning --task BCN-42 \
+#     --summary "Reworking the ingest path" --confidence 0.9
 #
 # The agent signature (which model, which harness) is detected automatically —
 # see the block below. Override it with --model/--harness, or BEACON_MODEL/
@@ -151,8 +151,8 @@ else
   [ -n "$MODEL" ] && BODY="$BODY,\"model\":\"$(json_escape "$MODEL")\""
   [ -n "$HARNESS" ] && BODY="$BODY,\"harness\":\"$(json_escape "$HARNESS")\""
   # Tags this as the model-authored path and joins it to the same session
-  # timeline the hooks report on. Without these, agent.planning/blocked/
-  # completed sit unattached beside the heartbeats they belong with.
+  # timeline the hooks report on. Without these, agent.planning/completed
+  # sit unattached beside the heartbeats they belong with.
   BODY="$BODY,\"instrumentation\":\"model\""
   [ -n "$SESSION_ID" ] && BODY="$BODY,\"sessionId\":\"$(json_escape "$SESSION_ID")\""
   case "$CONFIDENCE" in
