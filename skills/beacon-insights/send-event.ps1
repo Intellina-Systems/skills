@@ -77,7 +77,7 @@ if (-not $baseUrl) {
   $urlFile = Join-Path $beaconDir 'url'
   if (Test-Path $urlFile) { $baseUrl = (Get-Content $urlFile -Raw).Trim() }
 }
-if (-not $baseUrl) { $baseUrl = 'https://beacon-tool.vercel.app' }
+if (-not $baseUrl) { $baseUrl = 'https://www.heybeacon.co' }
 $baseUrl = $baseUrl.TrimEnd('/')
 
 if (-not $Repo) {

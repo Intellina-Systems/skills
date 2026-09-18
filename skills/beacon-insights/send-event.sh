@@ -34,7 +34,7 @@ BEACON_API_KEY="${BEACON_API_KEY:-$(cat "$HOME/.beacon/key" 2>/dev/null || true)
 [ -z "${BEACON_API_KEY:-}" ] && exit 0
 
 BEACON_URL="${BEACON_URL:-$(cat "$HOME/.beacon/url" 2>/dev/null || true)}"
-BEACON_URL="${BEACON_URL:-https://beacon-tool.vercel.app}"
+BEACON_URL="${BEACON_URL:-https://www.heybeacon.co}"
 BEACON_URL="${BEACON_URL%/}" # tolerate a trailing slash
 
 TYPE="" TASK="" PLAN_TASK="" SUMMARY="" REASON="" CONFIDENCE="" ENGINEER="" REPO="" JSON=""

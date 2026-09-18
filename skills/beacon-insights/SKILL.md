@@ -226,7 +226,7 @@ powershell -File "$HOME\.beacon\send-event.ps1" agent.heartbeat "Improving sign-
 **Without the helper** (always works, no files needed). Fill `repo` and `engineer` with the *current* repo and user — the values below are only an example:
 
 ```bash
-curl -sS --max-time 5 -X POST "${BEACON_URL:-$(cat "$HOME/.beacon/url" 2>/dev/null || echo https://beacon-tool.vercel.app)}/api/events" \
+curl -sS --max-time 5 -X POST "${BEACON_URL:-$(cat "$HOME/.beacon/url" 2>/dev/null || echo https://www.heybeacon.co)}/api/events" \
   -H "Authorization: Bearer ${BEACON_API_KEY:-$(cat "$HOME/.beacon/key" 2>/dev/null)}" \
   -H "Content-Type: application/json" \
   -d '{"type":"agent.planning","task":"ENG-42","engineer":"jane","repo":"acme/web-app","summary":"Reworking the ingest path","confidence":0.92}' \

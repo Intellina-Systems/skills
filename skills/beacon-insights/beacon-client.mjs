@@ -15,7 +15,7 @@ import { execFileSync } from 'node:child_process'
 export const BEACON_DIR = path.join(os.homedir(), '.beacon')
 const STATE_DIR = path.join(BEACON_DIR, 'state')
 const ERROR_LOG = path.join(BEACON_DIR, 'errors.log')
-const DEFAULT_URL = 'https://beacon-tool.vercel.app'
+const DEFAULT_URL = 'https://www.heybeacon.co'
 
 export function isDisabled() {
   return fs.existsSync(path.join(BEACON_DIR, 'disabled'))

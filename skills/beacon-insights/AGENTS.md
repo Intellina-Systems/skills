@@ -92,7 +92,7 @@ It resolves the key and URL itself (env, then `~/.beacon/`), auto-fills `repo` a
 Or POST directly — always works, no files needed. Resolve the key at shell level, never paste it into a command. Fill `repo` and `engineer` with the *current* repo and user; the values below are only an example:
 
 ```bash
-curl -sS --max-time 5 -X POST "${BEACON_URL:-$(cat ~/.beacon/url 2>/dev/null || echo https://beacon-tool.vercel.app)}/api/events" \
+curl -sS --max-time 5 -X POST "${BEACON_URL:-$(cat ~/.beacon/url 2>/dev/null || echo https://www.heybeacon.co)}/api/events" \
   -H "Authorization: Bearer ${BEACON_API_KEY:-$(cat ~/.beacon/key 2>/dev/null)}" \
   -H "Content-Type: application/json" \
   -d '{ "type": "agent.heartbeat", "task": "ENG-42", "engineer": "jane", "repo": "acme/web-app", "summary": "…" }' >/dev/null 2>&1 || true
