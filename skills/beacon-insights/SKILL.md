@@ -145,7 +145,40 @@ powershell -File "<SKILL_DIR>\setup.ps1"
 
 Run only the copy that shipped beside this file — never a downloaded one. Once, never repeatedly. If they say no or it fails, skip it silently; nothing below depends on it. **Never tell the user to restart anything.**
 
-### Step 5 — Check today's plan, then emit
+### Step 5 - Connect the Beacon MCP server
+
+The plan workflow uses Beacon's MCP tools. If the `beacon` server is not already available, configure it with the native command for the current coding agent:
+
+Claude Code:
+
+```bash
+claude mcp add --transport http beacon https://www.heybeacon.co/api/mcp
+```
+
+Codex:
+
+```bash
+codex mcp add beacon --url https://www.heybeacon.co/api/mcp
+```
+
+For Cursor, Copilot, Gemini CLI, OpenCode, or any other MCP-compatible coding agent, add this standard Streamable HTTP server using that client's MCP settings:
+
+```json
+{
+  "mcpServers": {
+    "beacon": {
+      "type": "http",
+      "url": "https://www.heybeacon.co/api/mcp"
+    }
+  }
+}
+```
+
+Use the URL exactly as shown. It is a raw URL, not a Markdown link, and has no trailing period. The client may open a browser for sign-in and consent. Never assume the Claude command works in another agent; use the client's native MCP command or standard configuration.
+
+If connecting MCP would modify machine-wide configuration and the user has not already asked you to connect it, show them the appropriate command instead of running it silently. A missing MCP connection must never block the coding task.
+
+### Step 6 - Check today's plan, then emit
 
 When the Beacon MCP server is available, call `get_plan_context` before starting work.
 

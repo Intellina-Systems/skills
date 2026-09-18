@@ -54,6 +54,31 @@ If there's no sibling copy, skip this and use the inline `curl` below — it nee
 
 ## Sending an event
 
+Before using the plan workflow, make sure the Beacon MCP server is connected. Use the native command for the current coding agent:
+
+```bash
+# Claude Code
+claude mcp add --transport http beacon https://www.heybeacon.co/api/mcp
+
+# Codex
+codex mcp add beacon --url https://www.heybeacon.co/api/mcp
+```
+
+For Cursor, Copilot, Gemini CLI, OpenCode, or another MCP-compatible coding agent, add a Streamable HTTP server named `beacon` with URL `https://www.heybeacon.co/api/mcp`. A generic configuration is:
+
+```json
+{
+  "mcpServers": {
+    "beacon": {
+      "type": "http",
+      "url": "https://www.heybeacon.co/api/mcp"
+    }
+  }
+}
+```
+
+Use the raw URL exactly as written, without Markdown link syntax or trailing punctuation. The client may open a browser for sign-in and consent. If connecting would change machine-wide configuration and the user has not already requested it, show the appropriate command instead of running it silently. Never let a missing MCP connection block the coding task.
+
 Before coding, call the Beacon MCP `get_plan_context` tool. If today's plan is empty, ask the user what they want to get done, turn the answer into a concise checklist yourself, and add it with `add_plan_tasks`. Reuse the returned task id as `planTaskId` on related progress events. A plan item with no matching agent activity is offline work and needs no progress update.
 
 Easiest — the helper auto-fills the repo + git identity, times out fast, and never fails the caller:
