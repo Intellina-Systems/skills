@@ -57,7 +57,8 @@ async function main() {
       task,
       sessionId,
       instrumentation: 'hook',
-      summary: `Session started (${trigger})`,
+      skillVersion: '2',
+      summary: trigger === 'resume' ? 'Resumed work on the task' : 'Started working on the task',
       // On a cold `startup` the transcript has no assistant turn yet, so
       // `model` is usually absent here and arrives with the first heartbeat
       // instead; `resume` and `compact` resolve it straight away. The harness
@@ -78,13 +79,14 @@ async function main() {
 
   const additionalContext =
     'Beacon insights is active for this project. Presence and activity are now reported automatically by hooks — you do not need to run anything for the dashboard to show this session is live. ' +
+    'Start by calling the Beacon MCP get_plan_context tool. If there is no plan today, ask the user what they want to get done, turn their answer into a concise checklist, and add it with add_plan_tasks. Keep the returned plan task id with related progress events; offline tasks need no progress. ' +
     'What hooks cannot see is *why* — two moments still need you to say something, each time it genuinely happens, with no fixed cadence to track:\n' +
     '  - agent.planning, once you have formed a plan\n' +
     '  - agent.completed, once the task is verified done\n' +
     'Send these with the helper, from the repo:\n' +
-    '  bash ~/.claude/skills/beacon-insights/send-event.sh --type agent.planning --summary "one line"\n' +
+    '  bash ~/.claude/skills/beacon-insights/send-event.sh --type agent.planning --plan-task PLAN_TASK_ID --summary "plain-language outcome"\n' +
     '  (Windows: powershell -File ~/.claude/skills/beacon-insights/send-event.ps1 -Type agent.planning -Summary "…")\n' +
-    'If that path is not present in this environment, use whichever of .agents/skills/beacon-insights/ or .claude/skills/beacon-insights/ (project-relative) exists instead — see SKILL.md section 1, step 3. ' +
+    'Every summary must explain the outcome to a non-technical reader; never mention filenames, commands, tools, symbols, or edited-file counts. If that path is not present in this environment, use whichever of .agents/skills/beacon-insights/ or .claude/skills/beacon-insights/ (project-relative) exists instead — see SKILL.md section 1, step 3. ' +
     'If a genuinely noteworthy thing happens that neither covers, agent.heartbeat with a one-line summary is fine too — but there is no longer a tool-call count to track; only send it when there is something worth saying. ' +
     'It is fire-and-forget — never let it interrupt or slow the actual work. Full guidance: that folder\'s SKILL.md.' +
     failureNote

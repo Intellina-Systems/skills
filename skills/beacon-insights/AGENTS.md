@@ -1,5 +1,7 @@
 # Beacon Insights — agent instructions
 
+This is Beacon Insights V2. Every event emitted by the bundled helpers and hooks carries `skillVersion: "2"` as hidden metadata; events without it are V1.
+
 If you are a coding agent (Codex, GitHub Copilot, Gemini CLI, OpenCode, Antigravity, or anything else working in a repo that installed this skill), follow these instructions for the entire duration of every coding task, whether that's a fresh session each time or one long conversation that never restarts.
 
 This file exists because `SKILL.md` uses the Agent Skills format (YAML frontmatter + model-invoked discovery), which not every agent reads natively. This file carries the same instructions in plain prose so the rest pick them up too — read it at the start of a coding task, and re-apply it for as long as the task runs. `SKILL.md` is the source of truth; if the two ever disagree, follow `SKILL.md`.
@@ -8,7 +10,7 @@ This file exists because `SKILL.md` uses the Agent Skills format (YAML frontmatt
 
 Beacon is an engineering-intelligence dashboard. It stays accurate only if agents report their own progress as structured events — nobody writes manual status updates.
 
-**If you're running under Claude Code and this project has run `setup.sh`/`setup.ps1`**, presence and activity (session start, a heartbeat every ~15-20 tool calls, test results, session end) are reported automatically by hooks — that part no longer depends on you. Your job is narrower: three moments only a model can recognize (see *Event types* below).
+**If you're running under Claude Code and this project has run `setup.sh`/`setup.ps1`**, presence and activity (session start, a heartbeat every ~15-20 tool calls, test results, session end) are reported automatically by hooks — that part no longer depends on you. Your job is narrower: two moments only a model can recognize (see *Event types* below).
 
 **On every other agent platform** (Codex, GitHub Copilot, Gemini CLI, OpenCode, Antigravity), there is no equivalent hook mechanism today, so presence is still best-effort and depends on you: send `agent.session_started` when a task begins, and check in with `agent.heartbeat` at natural checkpoints as the task runs, so a long task doesn't go dark.
 
@@ -52,10 +54,12 @@ If there's no sibling copy, skip this and use the inline `curl` below — it nee
 
 ## Sending an event
 
+Before coding, call the Beacon MCP `get_plan_context` tool. If today's plan is empty, ask the user what they want to get done, turn the answer into a concise checklist yourself, and add it with `add_plan_tasks`. Reuse the returned task id as `planTaskId` on related progress events. A plan item with no matching agent activity is offline work and needs no progress update.
+
 Easiest — the helper auto-fills the repo + git identity, times out fast, and never fails the caller:
 
 ```bash
-bash ~/.beacon/send-event.sh --type agent.heartbeat --task ENG-42 --summary "Refactoring session middleware"
+bash ~/.beacon/send-event.sh --type agent.heartbeat --task ENG-42 --plan-task PLAN_TASK_ID --summary "Improving sign-in reliability"
 ```
 
 It resolves the key and URL itself (env, then `~/.beacon/`), auto-fills `repo` and `engineer` from the current repo's git, and honours the opt-out — nothing to pass in. (Windows: `powershell -File ~\.beacon\send-event.ps1 -Type agent.heartbeat -Task ENG-42 -Summary "…"`. Full body/batch: `send-event.sh --json '{ "events": [ {...} ] }'`.)
@@ -73,7 +77,9 @@ Get `repo` and `engineer` for the repo you're actually in with `git remote get-u
 
 Batch up to 100 events per request with `{ "events": [ {...}, {...} ] }`. Fire-and-forget: if it fails, drop it silently, don't retry in a loop, don't surface the failure to the user, don't let it interrupt real work.
 
-Fields: `type` (required, dot-namespaced, see below), `task` (work-item key/id — infer from branch name, ticket reference, or commit messages), `engineer` (name/email/git login), `repo` (the repo you're working in right now, as `org/name` — the helper auto-fills it; always send it), `summary` (≤500 chars), `reason` (≤2000 chars, for failures — what's wrong and what would fix it), `confidence` (0–1), `occurredAt` (ISO timestamp), `externalId` (for dedup), `payload` (extra JSON). Never put secrets, API keys, tokens, or sensitive file contents in any of these — and never echo or print the Beacon key itself.
+Fields: `type` (required, dot-namespaced, see below), `task` (work-item key/id — infer from branch name, ticket reference, or commit messages), `planTaskId` (daily-plan task id), `engineer` (name/email/git login), `repo` (the repo you're working in right now, as `org/name` — the helper auto-fills it; always send it), `summary` (≤500 chars), `reason` (≤2000 chars, for failures — what's wrong and what would fix it), `confidence` (0–1), `occurredAt` (ISO timestamp), `externalId` (for dedup), `payload` (extra JSON). Never put secrets, API keys, tokens, or sensitive file contents in any of these — and never echo or print the Beacon key itself.
+
+Summaries are read by non-technical people. Describe the outcome being worked toward in plain language. Never mention filenames, commands, tool calls, implementation symbols, or how many files changed.
 
 ### The agent signature — `model`, `harness`, `harnessVersion`
 
@@ -95,7 +101,7 @@ If you're on a platform the detection doesn't recognise (it's a best-effort list
 
 On any other platform, none of the "sent automatically" column applies — send `agent.session_started`, `agent.heartbeat`, and test results yourself, the same as the three that are always yours.
 
-## Cadence — three moments, not a tool-call count
+## Cadence — two moments, not a tool-call count
 
 Don't count tool calls. A model can't reliably track its own count, and the count is gone the moment context compacts — this used to be the instruction here and it was the single most fragile part of the whole skill.
 

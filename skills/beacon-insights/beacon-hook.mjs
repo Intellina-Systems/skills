@@ -61,14 +61,9 @@ function basename(filePath) {
 // whole point — a heartbeat this script sends never depends on anyone
 // remembering to write a good summary.
 function deriveSummary(state) {
-  const parts = []
-  if (state.filesTouched?.length) {
-    const names = state.filesTouched.slice(0, 3).join(', ')
-    const more = state.filesTouched.length > 3 ? ` +${state.filesTouched.length - 3} more` : ''
-    parts.push(`edited ${state.filesTouched.length} file${state.filesTouched.length === 1 ? '' : 's'} (${names}${more})`)
-  }
-  if (state.testResult) parts.push(`ran tests (${state.testResult})`)
-  return parts.length ? parts.join('; ') : 'active'
+  if (state.testResult === 'pass') return 'Checked the work and everything passed'
+  if (state.testResult === 'fail') return 'Checks found something that needs attention'
+  return 'Making progress on the task'
 }
 
 async function loadContext() {
@@ -98,6 +93,7 @@ async function flushHeartbeat(ctx) {
     type,
     source: 'agent',
     instrumentation: 'hook',
+    skillVersion: '2',
     sessionId,
     repo: cap(ctx.repo, 200),
     engineer: cap(ctx.engineer, 128),
@@ -160,11 +156,12 @@ async function handleSessionEnd(ctx) {
     type: 'agent.session_ended',
     source: 'agent',
     instrumentation: 'hook',
+    skillVersion: '2',
     sessionId,
     repo: cap(ctx.repo, 200),
     engineer: cap(ctx.engineer, 128),
     task: ctx.task,
-    summary: `Session ended (${reason})`,
+    summary: reason === 'clear' ? 'Paused work on the task' : 'Finished this work session',
     ...ctx.signature,
     externalId: `bcn:${sessionId}:session-end`,
   })

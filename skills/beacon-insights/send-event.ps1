@@ -4,7 +4,7 @@ repo and engineer, times out fast so it can never hang your work, and never
 fails the caller. If BEACON_API_KEY isn't set it silently does nothing.
 
 Usage (positional - the short form most callers reach for):
-  powershell -File send-event.ps1 agent.heartbeat "Refactoring session middleware"
+  powershell -File send-event.ps1 agent.heartbeat "Improving sign-in reliability"
 
 Usage (flags):
   powershell -File send-event.ps1 -Type agent.planning -Task BCN-42 -Summary "..." -Confidence 0.9
@@ -32,6 +32,7 @@ Never put secrets, tokens, or file contents in any field.
 param(
   [string]$Type,
   [string]$Task,
+  [string]$PlanTask,
   [string]$Summary,
   [string]$Reason,
   [string]$Confidence,
@@ -162,8 +163,9 @@ else {
     [Console]::Error.WriteLine('send-event: no event type given, nothing sent (try: send-event.ps1 agent.heartbeat "summary")')
     exit 0
   }
-  $obj = @{ type = $Type }
+  $obj = @{ type = $Type; skillVersion = '2' }
   if ($Task) { $obj.task = $Task }
+  if ($PlanTask) { $obj.planTaskId = $PlanTask }
   if ($Engineer) { $obj.engineer = $Engineer }
   if ($Summary) { $obj.summary = $Summary }
   if ($Reason) { $obj.reason = $Reason }

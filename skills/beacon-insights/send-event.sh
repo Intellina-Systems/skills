@@ -5,7 +5,7 @@
 # work). If BEACON_API_KEY isn't set, it silently does nothing.
 #
 # Usage (positional — the short form most callers reach for):
-#   bash send-event.sh agent.heartbeat "Refactoring session middleware"
+#   bash send-event.sh agent.heartbeat "Improving sign-in reliability"
 #
 # Usage (flags):
 #   bash send-event.sh --type agent.planning --task BCN-42 \
@@ -37,12 +37,13 @@ BEACON_URL="${BEACON_URL:-$(cat "$HOME/.beacon/url" 2>/dev/null || true)}"
 BEACON_URL="${BEACON_URL:-https://beacon-tool.vercel.app}"
 BEACON_URL="${BEACON_URL%/}" # tolerate a trailing slash
 
-TYPE="" TASK="" SUMMARY="" REASON="" CONFIDENCE="" ENGINEER="" REPO="" JSON=""
+TYPE="" TASK="" PLAN_TASK="" SUMMARY="" REASON="" CONFIDENCE="" ENGINEER="" REPO="" JSON=""
 MODEL="${BEACON_MODEL:-}" HARNESS="${BEACON_HARNESS:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --type) TYPE="$2"; shift 2 ;;
     --task) TASK="$2"; shift 2 ;;
+    --plan-task) PLAN_TASK="$2"; shift 2 ;;
     --summary) SUMMARY="$2"; shift 2 ;;
     --reason) REASON="$2"; shift 2 ;;
     --confidence) CONFIDENCE="$2"; shift 2 ;;
@@ -142,8 +143,9 @@ else
     echo "send-event: no event type given, nothing sent (try: send-event.sh agent.heartbeat \"summary\")" >&2
     exit 0
   }
-  BODY="{\"type\":\"$(json_escape "$TYPE")\""
+  BODY="{\"type\":\"$(json_escape "$TYPE")\",\"skillVersion\":\"2\""
   [ -n "$TASK" ] && BODY="$BODY,\"task\":\"$(json_escape "$TASK")\""
+  [ -n "$PLAN_TASK" ] && BODY="$BODY,\"planTaskId\":\"$(json_escape "$PLAN_TASK")\""
   [ -n "$ENGINEER" ] && BODY="$BODY,\"engineer\":\"$(json_escape "$ENGINEER")\""
   [ -n "$SUMMARY" ] && BODY="$BODY,\"summary\":\"$(json_escape "$SUMMARY")\""
   [ -n "$REASON" ] && BODY="$BODY,\"reason\":\"$(json_escape "$REASON")\""

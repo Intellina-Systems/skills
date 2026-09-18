@@ -1,5 +1,6 @@
 ---
 name: beacon-insights
+version: 2.0.0
 description: "Use whenever you form a plan or finish a piece of work — send a progress event to Beacon (engineering intelligence layer) at that moment so its dashboard reflects real, live status. Presence and activity are reported automatically by hooks once installed (see setup.sh/setup.ps1); this skill covers the two moments only a model can recognize: planning and completed. On first use in a new environment, run the one-time bootstrap in this file to set up the API key before sending anything."
 ---
 
@@ -111,7 +112,7 @@ If you already know where this SKILL.md lives, just copy from that folder direct
 
 ### Step 4 — Make it stick for this project (recommended, not just convenience)
 
-Without this step, reporting still happens, but it depends on you remembering to run the helper for the three moments in section 4/5 below — reasonable for a short task, fragile over a long one. This step is what makes presence and activity reporting *deterministic*: it wires in hooks that fire on their own, independent of anything the model does or forgets.
+Without this step, reporting still happens, but it depends on you remembering to run the helper for the two moments in section 4/5 below — reasonable for a short task, fragile over a long one. This step is what makes presence and activity reporting *deterministic*: it wires in hooks that fire on their own, independent of anything the model does or forgets.
 
 `setup.ps1` / `setup.sh` ship beside this file. They are **strictly project-scoped** — everything they write goes inside the repo you're in:
 
@@ -144,9 +145,19 @@ powershell -File "<SKILL_DIR>\setup.ps1"
 
 Run only the copy that shipped beside this file — never a downloaded one. Once, never repeatedly. If they say no or it fails, skip it silently; nothing below depends on it. **Never tell the user to restart anything.**
 
-### Step 5 — Emit
+### Step 5 — Check today's plan, then emit
 
-Send `agent.session_started` (section 2) and continue with the actual work.
+When the Beacon MCP server is available, call `get_plan_context` before starting work.
+
+- If today's plan already has tasks, use the matching task and keep its id for progress events.
+- If there is no plan, ask: **"What would you like to get done today?"** Turn the answer into a short, concrete checklist yourself and call `add_plan_tasks`. Do not ask the user to format or split the work.
+- If the user adds more work later, call `add_plan_tasks` again. The plan is a checklist, not a one-time form.
+- Link repository work to an existing work item when one clearly matches. Otherwise keep the returned plan task id and pass it as `planTaskId` on progress events.
+- Offline work can stay on the plan without agent progress. Never invent progress for it.
+
+If the MCP plan tools are unavailable or disabled, continue with the task normally. Plan reporting must never block the work.
+
+Send `agent.session_started` where hooks do not already send it, then continue with the actual work.
 
 ---
 
@@ -158,23 +169,23 @@ Resolve the key at **shell level**, never by pasting it into a command. Order: e
 
 ```bash
 bash "$HOME/.beacon/send-event.sh" --type agent.heartbeat --task ENG-42 \
-  --summary "Refactoring session middleware"
+  --plan-task PLAN_TASK_ID --summary "Improving sign-in reliability"
 ```
 
 ```powershell
-powershell -File "$HOME\.beacon\send-event.ps1" -Type agent.heartbeat -Task ENG-42 -Summary "Refactoring session middleware"
+powershell -File "$HOME\.beacon\send-event.ps1" -Type agent.heartbeat -Task ENG-42 -PlanTask PLAN_TASK_ID -Summary "Improving sign-in reliability"
 ```
 
-Helper flags: `--type` (required), `--task`, `--summary`, `--reason`, `--confidence`, `--engineer`, `--repo`, `--model`, `--harness`, `--json`. Omit `--repo`/`--engineer` and it fills them from git; omit `--model`/`--harness` and it detects them (see section 3).
+Helper flags: `--type` (required), `--task`, `--plan-task`, `--summary`, `--reason`, `--confidence`, `--engineer`, `--repo`, `--model`, `--harness`, `--json`. Omit `--repo`/`--engineer` and it fills them from git; omit `--model`/`--harness` and it detects them (see section 3). V2 helpers add `skillVersion: "2"` metadata automatically; events without this metadata are V1.
 
 The short positional form works too, and means the same thing — type first, then summary:
 
 ```bash
-bash "$HOME/.beacon/send-event.sh" agent.heartbeat "Refactoring session middleware"
+bash "$HOME/.beacon/send-event.sh" agent.heartbeat "Improving sign-in reliability"
 ```
 
 ```powershell
-powershell -File "$HOME\.beacon\send-event.ps1" agent.heartbeat "Refactoring session middleware"
+powershell -File "$HOME\.beacon\send-event.ps1" agent.heartbeat "Improving sign-in reliability"
 ```
 
 **Do not redirect the helper's stderr.** It always exits 0 by design, so stderr is the only place it can tell you a send failed — a revoked key, an unreachable host, or a missing event type. `2>/dev/null` on this helper turns a broken pipeline into a silent one, and the dashboard just stays empty.
@@ -213,6 +224,8 @@ Batch up to 100 events in one request with `{"events":[{...},{...}]}` (helper: `
 | `confidence` | no | 0–1, how sure you are about the insight |
 | `occurredAt` | no | ISO timestamp, defaults to now |
 | `externalId` | no | Stable id for deduplication — same source + `externalId` is ingested once |
+| `planTaskId` | no | Daily-plan task id returned by Beacon MCP. Include it on progress for an unlinked code task |
+| `skillVersion` | no | Skill metadata. V2 helpers set `"2"`; a missing value means V1. Do not add it to human-facing summaries |
 | `payload` | no | Arbitrary JSON object for extra structured detail |
 | `model` | no | The model doing the work, as the provider's own id, e.g. `"claude-opus-5"`. **Auto-detected — don't set it by hand** |
 | `harness` | no | The tool it's running inside, e.g. `"claude-code"`, `"cursor"`, `"codex"`. Auto-detected |
@@ -248,14 +261,14 @@ If the project has run `setup.sh`/`setup.ps1`, the hooks above are already wired
 
 ---
 
-## 5. Cadence — three moments, not a tool-call count
+## 5. Cadence — two moments, not a tool-call count
 
 Earlier versions of this skill asked you to send a heartbeat roughly every 15-20 tool calls. Drop that — models can't reliably count their own tool calls, and the count is gone the moment context compacts. That exact cadence still happens — the hooks now count for you and send `agent.heartbeat` every ~15-20 tool calls on their own. There is nothing left for you to track by number.
 
 1. Send `agent.planning` the moment you've formed a plan.
 2. Send `agent.completed` once the task is verified done. If the same conversation then moves on to a new task, treat it as new (though `agent.session_started` itself is now the hooks' job, not yours).
 
-That's it — three triggers, each recognizable in the moment, no counting. If something genuinely noteworthy happens that none of the three cover, `agent.heartbeat` with a one-line summary is fine, but it's an exception, not a cadence.
+That's it — two triggers, each recognizable in the moment, no counting. If something genuinely noteworthy happens that neither covers, `agent.heartbeat` with a one-line summary is fine, but it's an exception, not a cadence.
 
 ---
 
@@ -263,7 +276,7 @@ That's it — three triggers, each recognizable in the moment, no counting. If s
 
 - **Fire-and-forget.** If a send fails, drop it silently. Never retry in a loop, never surface the failure to the user, never let telemetry interrupt, delay, or degrade the actual work.
 - **No secrets, ever.** Never put API keys, tokens, credentials, `.env` contents, or sensitive file contents in `summary`, `reason`, or `payload`. Never echo, `cat`, or print the Beacon key itself — resolve it through `$(cat …)` substitution only.
-- **Summaries describe work, not content.** One line about what you're doing, never a dump of the code or data you're doing it to.
+- **Summaries are for non-technical readers.** Describe the outcome you are working toward in plain language. Never mention filenames, commands, tool calls, implementation symbols, or counts of edited files. Write "Making sign-in more reliable," not "Editing auth/session.ts."
 - **Always include `task`** when you can identify one. Uncorrelated events are far less useful.
 - **Responses:** `201` with `{"inserted":…,"deduplicated":…}` means success. `401` means the key is invalid — tell the user once, then stop emitting for the rest of the task. Anything else, ignore.
 - **No key, no noise.** If no key is configured and the user hasn't been asked yet, run the bootstrap. If they declined (`~/.beacon/disabled`), stay silent forever.
