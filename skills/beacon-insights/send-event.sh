@@ -137,7 +137,17 @@ if [ -z "$MODEL" ] && [ -n "$SESSION_ID" ]; then
   done
 fi
 
-json_escape() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e ':a;N;$!ba;s/\n/\\n/g'; }
+# Portable across GNU and BSD/macOS sed: one -e per command (BSD reads a label
+# to the end of its -e), and $!N so a one-line value isn't dropped by BSD's N
+# at end of input. Lines are joined first, so the escapes reach every line, not
+# just the first. Tabs and CRs are escaped too, or JSON.parse rejects the body.
+json_escape() {
+  local tab cr
+  tab="$(printf '\t')"
+  cr="$(printf '\r')"
+  printf '%s' "$1" | sed -e ':a' -e '$!N' -e '$!ba' \
+    -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e "s/$tab/\\\\t/g" -e "s/$cr/\\\\r/g" -e 's/\n/\\n/g'
+}
 
 new_id() {
   local hex
