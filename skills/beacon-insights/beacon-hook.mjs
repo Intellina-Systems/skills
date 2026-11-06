@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // Consolidated deterministic hook — the reliability floor that doesn't depend
-// on the model remembering anything. One file, four Claude Code hook events,
+// on the model remembering anything. One file, three Claude Code hook events,
 // dispatched by a subcommand argument (see setup.sh/setup.ps1 for how each
 // is registered). Every subcommand reads the hook's stdin JSON payload,
 // updates a small per-session state file, and — subject to its own
-// throttle — POSTs a derived event via beacon-client.mjs.
+// throttle — queues a derived event in the outbox (beacon-outbox.mjs), which a
+// background process sends. The hook itself never waits on the network.
 //
 // Cadence is deliberately sparse: one session_started, one session_ended, and
 // a heartbeat roughly every 15-20 tool calls — counted by this hook, not
@@ -22,7 +23,8 @@
 // Usage: node beacon-hook.mjs <tool|stop|session-end>
 
 import { readFileSync } from 'node:fs'
-import { hasKey, isDisabled, getGitInfo, postEvent, readSessionState, writeSessionState, cap } from './beacon-client.mjs'
+import { hasKey, isDisabled, getGitInfo, readSessionState, writeSessionState, cap } from './beacon-client.mjs'
+import { kickFlush, outboxStatus, queueEvent } from './beacon-outbox.mjs'
 import { resolveSignature } from './agent-signature.mjs'
 
 const TOOL_CALL_THRESHOLD = 18 // heartbeat every ~15-20 tool calls, counted here instead of by the model
@@ -89,11 +91,13 @@ async function flushHeartbeat(ctx) {
   const type =
     state.testResult === 'fail' ? 'agent.tests_failed' : state.testResult === 'pass' ? 'agent.tests_passed' : 'agent.heartbeat'
   state.heartbeatSeq = (state.heartbeatSeq || 0) + 1
-  const sent = await postEvent({
+  // Queued, not sent. Once it is safely on disk the window resets: delivering
+  // it, and retrying if the network fails, is the outbox's job.
+  const queued = queueEvent({
     type,
     source: 'agent',
     instrumentation: 'hook',
-    skillVersion: '2',
+    skillVersion: '3',
     sessionId,
     repo: cap(ctx.repo, 200),
     engineer: cap(ctx.engineer, 128),
@@ -102,7 +106,7 @@ async function flushHeartbeat(ctx) {
     ...ctx.signature,
     externalId: `bcn:${sessionId}:heartbeat:${state.heartbeatSeq}`,
   })
-  if (sent) {
+  if (queued) {
     state.toolCallCount = 0
     state.filesTouched = []
     state.testResult = null
@@ -132,31 +136,73 @@ async function handleTool(ctx) {
 
   if (state.toolCallCount < TOOL_CALL_THRESHOLD) {
     writeSessionState(sessionId, state) // accumulate only — not at the threshold yet
+    // Anything waiting for a retry gets another chance while work goes on.
+    // Throttled inside to at most one background sender a minute, and only
+    // when something is actually due, so this costs nothing on most edits.
+    kickFlush()
     return
   }
   await flushHeartbeat(ctx)
 }
 
-// Safety net, not an independent trigger: PostToolUse already flushes the
-// instant the threshold is crossed, so this only fires when that send failed
-// (network hiccup) and there's still a full window of unreported work sitting
-// in state. It must never fire on every turn — that's the exact flood this
-// replaced.
+// End of a turn — the agent has finished what it was asked. Two jobs:
+//
+// 1. Safety net for the heartbeat window: PostToolUse queues the instant the
+//    threshold is crossed, so this only fires if that queueing failed and a
+//    full window of work is still unreported. It must never fire on every
+//    turn — that's the exact flood this replaced.
+// 2. The one place a person hears that updates aren't getting through. The
+//    end of a turn is when they look up from the work, so a note here is seen
+//    without interrupting anything. Shown once per session for a given state
+//    of the outbox: a new problem gets a new note, the same one is not
+//    repeated every turn.
 async function handleStop(ctx) {
-  const { input, state } = ctx
+  const { input, sessionId, state } = ctx
   if (input.stop_hook_active) return // continuation turn — the original turn's Stop already covers this
-  if (!state.dirty || (state.toolCallCount || 0) < TOOL_CALL_THRESHOLD) return
-  await flushHeartbeat(ctx)
+  if (state.dirty && (state.toolCallCount || 0) >= TOOL_CALL_THRESHOLD) await flushHeartbeat(ctx)
+  kickFlush()
+
+  const warning = deliveryWarning(outboxStatus())
+  const signature = warning ?? ''
+  if (signature !== (state.lastWarning ?? '')) {
+    state.lastWarning = signature
+    writeSessionState(sessionId, state)
+    if (warning) process.stdout.write(JSON.stringify({ systemMessage: warning }))
+  }
+}
+
+/** Plain-language note for the person, or null when there is nothing to say. */
+function deliveryWarning({ stuck, lastError, failedRecently, keyRejected }) {
+  const updates = (n) => `${n} progress update${n === 1 ? '' : 's'}`
+  if (keyRejected) {
+    return (
+      'Beacon: your API key was rejected, so progress updates are not reaching your dashboard. ' +
+      'They are saved and will be sent once the key works again: create a new key in Beacon > Settings > API keys and save it to ~/.beacon/key.'
+    )
+  }
+  const parts = []
+  if (stuck > 0) {
+    parts.push(
+      `${updates(stuck)} could not be delivered yet${lastError ? ` (${lastError})` : ''}. ` +
+        'They are saved and keep retrying in the background.',
+    )
+  }
+  if (failedRecently > 0) {
+    parts.push(
+      `${updates(failedRecently)} were refused by Beacon and set aside in ~/.beacon/outbox/failed (details in ~/.beacon/errors.log).`,
+    )
+  }
+  return parts.length > 0 ? `Beacon: ${parts.join(' ')}` : null
 }
 
 async function handleSessionEnd(ctx) {
   const { input, sessionId } = ctx
   const reason = input.reason || 'other'
-  await postEvent({
+  queueEvent({
     type: 'agent.session_ended',
     source: 'agent',
     instrumentation: 'hook',
-    skillVersion: '2',
+    skillVersion: '3',
     sessionId,
     repo: cap(ctx.repo, 200),
     engineer: cap(ctx.engineer, 128),

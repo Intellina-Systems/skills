@@ -19,7 +19,9 @@ if (!settingsPath || !skillRelPath) {
 }
 
 const base = `\${CLAUDE_PROJECT_DIR}/${skillRelPath}`
-const HOOK_TIMEOUT = 8 // seconds — a hard backstop above postEvent's own 5s internal timeout
+// Seconds. A backstop only: since V3 the hooks queue events and return in
+// milliseconds — sending happens in a background process (beacon-outbox.mjs).
+const HOOK_TIMEOUT = 8
 
 // hookEvent -> { matcher?, command }. Matcher only applies to PostToolUse
 // here; the rest fire unconditionally for their event. Notification and

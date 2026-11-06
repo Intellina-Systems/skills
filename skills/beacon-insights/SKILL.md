@@ -1,6 +1,6 @@
 ---
 name: beacon-insights
-version: 2.0.0
+version: 3.0.0
 description: "Use whenever you form a plan or finish a piece of work — send a progress event to Beacon (engineering intelligence layer) at that moment so its dashboard reflects real, live status. Presence and activity are reported automatically by hooks once installed (see setup.sh/setup.ps1); this skill covers the two moments only a model can recognize: planning and completed. On first use in a new environment, run the one-time bootstrap in this file to set up the API key before sending anything."
 ---
 
@@ -74,41 +74,15 @@ If it isn't there, say so once and move on — don't loop.
 
 ### Step 3 — Locate the helper
 
-The helper auto-fills `repo` and `engineer` from git, times out fast, and can never fail its caller.
+The helper auto-fills `repo` and `engineer` from git, queues the event and returns at once, and can never fail its caller.
 
-**It ships with this skill.** `npx skills add` installs the whole `beacon-insights/` folder, so `send-event.sh` and `send-event.ps1` are already sitting next to this file. Find them and copy one to `~/.beacon/` so the rest of this doc has a single stable path:
+**It ships with this skill and runs from where it is installed** — `send-event.sh` / `send-event.ps1` sit next to this file, together with `beacon-outbox.mjs`, which they need. On Claude Code with the hooks set up, the session-start message prints the exact command with the real path on this machine; use that. Otherwise, the folder is the one this SKILL.md is in — usually `.agents/skills/beacon-insights/` or `.claude/skills/beacon-insights/` in the repo.
 
-```bash
-mkdir -p "$HOME/.beacon"
-for d in \
-  "$PWD/.agents/skills/beacon-insights" \
-  "$PWD/.claude/skills/beacon-insights" \
-  "$HOME/.agents/skills/beacon-insights" \
-  "$HOME/.claude/skills/beacon-insights"; do
-  if [ -f "$d/send-event.sh" ]; then
-    cp "$d/send-event.sh" "$HOME/.beacon/send-event.sh" && chmod +x "$HOME/.beacon/send-event.sh"
-    break
-  fi
-done
-```
+**Do not copy the helper somewhere else** (for example `~/.beacon/`). Away from `beacon-outbox.mjs` it can no longer queue and retry.
 
-```powershell
-New-Item -ItemType Directory -Force "$HOME\.beacon" | Out-Null
-foreach ($d in @(
-  (Join-Path $PWD '.agents\skills\beacon-insights'),
-  (Join-Path $PWD '.claude\skills\beacon-insights'),
-  (Join-Path $HOME '.agents\skills\beacon-insights'),
-  (Join-Path $HOME '.claude\skills\beacon-insights'))) {
-  $f = Join-Path $d 'send-event.ps1'
-  if (Test-Path $f) { Copy-Item $f (Join-Path $HOME '.beacon\send-event.ps1') -Force; break }
-}
-```
+**If there's no helper at all, use the inline `curl` in section 2.** It needs no files, but it has no outbox — a failed send is lost.
 
-If you already know where this SKILL.md lives, just copy from that folder directly — the list above is only a fallback for when you don't.
-
-**If there's no sibling copy, skip this step entirely and use the inline `curl` in section 2.** It needs no files and works everywhere.
-
-**Never download a script from the internet and run it.** Not from GitHub, not from anywhere — including the repo this skill came from. The helper is a convenience that ships with the install; if it isn't present, you do without it. There is no fallback download, by design.
+**Never download a script from the internet and run it.** Not from GitHub, not from anywhere — including the repo this skill came from. The helper ships with the install; if it isn't present, you do without it. There is no fallback download, by design.
 
 ### Step 4 — Make it stick for this project (recommended, not just convenience)
 
@@ -198,30 +172,30 @@ Send `agent.session_started` where hooks do not already send it, then continue w
 
 Resolve the key at **shell level**, never by pasting it into a command. Order: env var first, then the key file.
 
-**With the cached helper** — preferred. It resolves the key and URL itself (env, then `~/.beacon/`), auto-fills `repo` and `engineer` from the current repo's git, and honours the opt-out. Nothing to pass in:
+**With the helper** — preferred. `<SKILL_DIR>` is the folder this file is in (the session-start message gives the exact path). It resolves the key and URL itself (env, then `~/.beacon/`), auto-fills `repo` and `engineer` from the current repo's git, and honours the opt-out. Nothing to pass in:
 
 ```bash
-bash "$HOME/.beacon/send-event.sh" --type agent.heartbeat --task ENG-42 \
+bash "<SKILL_DIR>/send-event.sh" --type agent.heartbeat --task ENG-42 \
   --plan-task PLAN_TASK_ID --summary "Improving sign-in reliability"
 ```
 
 ```powershell
-powershell -File "$HOME\.beacon\send-event.ps1" -Type agent.heartbeat -Task ENG-42 -PlanTask PLAN_TASK_ID -Summary "Improving sign-in reliability"
+powershell -File "<SKILL_DIR>\send-event.ps1" -Type agent.heartbeat -Task ENG-42 -PlanTask PLAN_TASK_ID -Summary "Improving sign-in reliability"
 ```
 
-Helper flags: `--type` (required), `--task`, `--plan-task`, `--summary`, `--reason`, `--confidence`, `--engineer`, `--repo`, `--model`, `--harness`, `--json`. Omit `--repo`/`--engineer` and it fills them from git; omit `--model`/`--harness` and it detects them (see section 3). V2 helpers add `skillVersion: "2"` metadata automatically; events without this metadata are V1.
+Helper flags: `--type` (required), `--task`, `--plan-task`, `--summary`, `--reason`, `--confidence`, `--engineer`, `--repo`, `--model`, `--harness`, `--json`. Omit `--repo`/`--engineer` and it fills them from git; omit `--model`/`--harness` and it detects them (see section 3). V3 helpers add `skillVersion: "3"` metadata automatically, plus a stable `externalId` and the real `occurredAt` so retries are safe.
 
 The short positional form works too, and means the same thing — type first, then summary:
 
 ```bash
-bash "$HOME/.beacon/send-event.sh" agent.heartbeat "Improving sign-in reliability"
+bash "<SKILL_DIR>/send-event.sh" agent.heartbeat "Improving sign-in reliability"
 ```
 
 ```powershell
-powershell -File "$HOME\.beacon\send-event.ps1" agent.heartbeat "Improving sign-in reliability"
+powershell -File "<SKILL_DIR>\send-event.ps1" agent.heartbeat "Improving sign-in reliability"
 ```
 
-**Do not redirect the helper's stderr.** It always exits 0 by design, so stderr is the only place it can tell you a send failed — a revoked key, an unreachable host, or a missing event type. `2>/dev/null` on this helper turns a broken pipeline into a silent one, and the dashboard just stays empty.
+**Do not redirect the helper's output.** It always exits 0 by design, so what it prints is the only way it can tell you something is wrong — a missing event type, or (without Node) a rejected key. `2>/dev/null` on this helper turns a broken pipeline into a silent one. Network failures are not your concern: the event is already queued and the outbox retries it.
 
 **Without the helper** (always works, no files needed). Fill `repo` and `engineer` with the *current* repo and user — the values below are only an example:
 
@@ -258,7 +232,7 @@ Batch up to 100 events in one request with `{"events":[{...},{...}]}` (helper: `
 | `occurredAt` | no | ISO timestamp, defaults to now |
 | `externalId` | no | Stable id for deduplication — same source + `externalId` is ingested once |
 | `planTaskId` | no | Daily-plan task id returned by Beacon MCP. Include it on progress for an unlinked code task |
-| `skillVersion` | no | Skill metadata. V2 helpers set `"2"`; a missing value means V1. Do not add it to human-facing summaries |
+| `skillVersion` | no | Skill metadata. V3 helpers and hooks set `"3"` (V2 set `"2"`; a missing value means V1). Do not add it to human-facing summaries |
 | `payload` | no | Arbitrary JSON object for extra structured detail |
 | `model` | no | The model doing the work, as the provider's own id, e.g. `"claude-opus-5"`. **Auto-detected — don't set it by hand** |
 | `harness` | no | The tool it's running inside, e.g. `"claude-code"`, `"cursor"`, `"codex"`. Auto-detected |
@@ -305,13 +279,27 @@ That's it — two triggers, each recognizable in the moment, no counting. If som
 
 ---
 
+## How delivery works (V3)
+
+Nothing you send waits on the network, and nothing is lost when the network fails.
+
+1. The helper (and every hook) writes the event to **`~/.beacon/outbox/`** — one small file per event — and returns immediately.
+2. A **background process** (`beacon-outbox.mjs flush`) sends what is queued, in batches. Delivered events are removed from the outbox.
+3. If a send fails (offline, timed out, Beacon busy), the event **goes back in the outbox with a later retry time** — 30s, 2m, 10m, 30m, 1h, then every few hours, for up to 7 days. Every hook run and every new event gives due retries another chance.
+4. If Beacon refuses an event outright (malformed), it is set aside in `~/.beacon/outbox/failed/` and written in full to `~/.beacon/errors.log`, so it can be replayed by hand. A rejected API key keeps everything queued until the key is fixed.
+5. Each event carries a stable `externalId` and its real `occurredAt`, so a retry is never double-counted and still lands at the moment it happened.
+6. If updates keep failing, the person sees **one short note when the agent finishes its turn** — never in the middle of the work.
+
+Check the queue any time with `node "<SKILL_DIR>/beacon-outbox.mjs" status`.
+
 ## 6. Hard rules
 
-- **Fire-and-forget.** If a send fails, drop it silently. Never retry in a loop, never surface the failure to the user, never let telemetry interrupt, delay, or degrade the actual work.
+- **Never in the way.** The helper queues and returns at once; delivery and retries happen in the background. Never retry a send yourself, never wait on one, never let telemetry interrupt, delay, or degrade the actual work.
+- **Never hide the helper's output.** Don't add `>/dev/null`, `2>&1`, or `|| true`. It is silent when all is well; anything it prints is a real problem (a missing helper, a rejected key) worth one sentence to the user.
 - **No secrets, ever.** Never put API keys, tokens, credentials, `.env` contents, or sensitive file contents in `summary`, `reason`, or `payload`. Never echo, `cat`, or print the Beacon key itself — resolve it through `$(cat …)` substitution only.
 - **Summaries are for non-technical readers.** Describe the outcome you are working toward in plain language. Never mention filenames, commands, tool calls, implementation symbols, or counts of edited files. Write "Making sign-in more reliable," not "Editing auth/session.ts."
 - **Always include `task`** when you can identify one. Uncorrelated events are far less useful.
-- **Responses:** `201` with `{"inserted":…,"deduplicated":…}` means success. `401` means the key is invalid — tell the user once, then stop emitting for the rest of the task. Anything else, ignore.
+- **Responses** (only if you POST with `curl` yourself): `201` with `{"inserted":…,"deduplicated":…}` means success; `401` means the key is invalid — tell the user once. The helper handles all of this itself.
 - **No key, no noise.** If no key is configured and the user hasn't been asked yet, run the bootstrap. If they declined (`~/.beacon/disabled`), stay silent forever.
 
 ---
@@ -331,12 +319,13 @@ npx skills add https://github.com/Intellina-Systems/skills --skill beacon-insigh
 | File | What it's for |
 |---|---|
 | `SKILL.md` | This file. The only one an agent has to read |
-| `send-event.sh` | Fire-and-forget POST helper (macOS/Linux/Git Bash), for the three model-sent events. Auto-fills `repo` + `engineer`, 5s timeout, always exits 0 |
+| `send-event.sh` | The helper for the model-sent events (macOS/Linux/Git Bash). Auto-fills `repo` + `engineer`, queues the event in the outbox and returns at once, always exits 0. Run it from this folder — it needs `beacon-outbox.mjs` beside it |
 | `send-event.ps1` | Same, for Windows PowerShell |
-| `beacon-client.mjs` | Shared Node helpers (key/url resolution, git lookup, throttle state) used by the two hook scripts below — not invoked directly |
+| `beacon-outbox.mjs` | The outbox: queues every event in `~/.beacon/outbox/`, sends in the background, retries failures with backoff, sets refused events aside. `status` prints the queue |
+| `beacon-client.mjs` | Shared Node helpers (key/url resolution, git lookup, throttle state, failure log) used by the hooks and the outbox — not invoked directly |
 | `agent-signature.mjs` | Works out the model / harness / harness version for the hook path, from the environment and the session transcript. Never invoked directly; the shell helpers implement the same contract themselves, since they have to run without Node |
-| `session-start-hook.mjs` | Claude Code SessionStart hook — sends `agent.session_started` itself, then re-injects the reminder on startup, resume, clear, and compaction |
-| `beacon-hook.mjs` | Claude Code hook covering PostToolUse, Stop, SessionEnd — the deterministic presence/activity layer, dispatched by subcommand. Counts tool calls itself and heartbeats every ~15-20 |
+| `session-start-hook.mjs` | Claude Code SessionStart hook — queues `agent.session_started` itself, then re-injects the reminder (with the helper's real path on this machine) on startup, resume, clear, and compaction |
+| `beacon-hook.mjs` | Claude Code hook covering PostToolUse, Stop, SessionEnd — the deterministic presence/activity layer, dispatched by subcommand. Counts tool calls itself and heartbeats every ~15-20; at the end of a turn, tells the person if updates are stuck |
 | `merge-settings.mjs` | Idempotently registers all of the above into a project's `.claude/settings.json` — called by `setup.sh`/`setup.ps1`, not run directly |
 | `AGENTS.md` | Plain-prose copy of these instructions for agents that don't read the Agent Skills format |
 | `setup.sh` / `setup.ps1` | **Project-scoped** persistence: registers every hook above in `./.claude/settings.json` and adds one line to `./AGENTS.md`. Nothing outside the repo. Optional — Step 4, with the user's go-ahead |

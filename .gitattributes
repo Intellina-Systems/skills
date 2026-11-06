@@ -1,0 +1,4 @@
+# Shell scripts must keep LF line endings — bash reads a CRLF script as
+# `set -uo pipefail` and fails. Pin every text file to LF on checkout, on
+# every platform, so a Windows clone or install still runs.
+* text=auto eol=lf

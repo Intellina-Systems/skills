@@ -1,11 +1,13 @@
-// Shared helpers for the Node-side hooks (session-start-hook.mjs, beacon-hook.mjs).
-// The model-invoked path (send-event.sh / send-event.ps1) stays independent on
-// purpose — it has to work with no Node available. This module exists so the
-// *hook* path, which always runs under Node already, isn't duplicating the same
-// key/url resolution, git lookup, and throttle-state logic six times over.
+// Shared helpers for the Node-side hooks (session-start-hook.mjs,
+// beacon-hook.mjs) and the outbox (beacon-outbox.mjs): key/url resolution, git
+// lookup, per-session throttle state, and the failure log.
 //
-// Same hard rules as send-event.sh: fire-and-forget, never throw past the
-// caller, never block a hook longer than it has to, never print the key.
+// Nothing here talks to the network any more. Since V3 every event is queued
+// in the outbox and sent by a background process (see beacon-outbox.mjs), so a
+// hook never waits on Beacon and a failed send is retried rather than lost.
+//
+// Same hard rules as send-event.sh: never throw past the caller, never block
+// a hook longer than it has to, never print the key.
 
 import fs from 'node:fs'
 import os from 'node:os'
@@ -122,7 +124,7 @@ export function pruneOldState(maxAgeMs = 7 * 24 * 60 * 60 * 1000) {
   }
 }
 
-function logFailure(line) {
+export function logFailure(line) {
   try {
     fs.mkdirSync(BEACON_DIR, { recursive: true })
     const stamped = `${new Date().toISOString()} ${line}\n`
@@ -133,44 +135,6 @@ function logFailure(line) {
     if (lines.length > 200) fs.writeFileSync(ERROR_LOG, lines.slice(-100).join('\n') + '\n')
   } catch {
     // Logging the failure must never itself be able to fail the caller.
-  }
-}
-
-// Reads back the last few failure lines so session-start can mention them —
-// the one place surfacing "your last N sends failed" costs nothing, because
-// it's already the moment the agent is about to tell the user something.
-export function recentFailures(count = 3) {
-  const lines = readTrimmed(ERROR_LOG).split('\n').filter(Boolean)
-  return lines.slice(-count)
-}
-
-// Fire-and-forget POST. Never throws. Returns true/false for callers that
-// want to decide whether to update local throttle state on success only.
-export async function postEvent(body) {
-  if (isDisabled()) return false
-  const key = resolveKey()
-  if (!key) return false
-  const url = resolveUrl()
-
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 5000)
-  try {
-    const res = await fetch(`${url}/api/events`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    })
-    if (!res.ok) {
-      logFailure(`HTTP ${res.status} sending ${body.type ?? '(batch)'}`)
-      return false
-    }
-    return true
-  } catch (err) {
-    logFailure(`${err?.name === 'AbortError' ? 'timeout' : (err?.message ?? 'unknown error')} sending ${body.type ?? '(batch)'}`)
-    return false
-  } finally {
-    clearTimeout(timeout)
   }
 }
 

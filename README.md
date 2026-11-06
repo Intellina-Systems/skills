@@ -15,7 +15,7 @@ npx skills add https://github.com/Intellina-Systems/skills --skill beacon-insigh
 ```
 
 That installs the whole skill folder — `SKILL.md`, the send-event helpers, the
-session hook, and the setup scripts — into `.agents/skills/beacon-insights/`,
+outbox, the session hooks, and the setup scripts — into `.agents/skills/beacon-insights/`,
 symlinked into every coding agent the installer detects (Claude Code, Codex,
 Cursor, Gemini CLI, GitHub Copilot, OpenCode, and others).
 
@@ -24,6 +24,29 @@ Install for every repo on the machine instead of just the current one:
 ```bash
 npx skills add https://github.com/Intellina-Systems/skills --skill beacon-insights -g
 ```
+
+## Updating to V3
+
+Beacon Insights is at **V3**. Re-run the install command above in each repo to
+update, then (on Claude Code) run the bundled setup again so the hooks point at
+the new files:
+
+```bash
+bash .agents/skills/beacon-insights/setup.sh
+```
+
+New in V3:
+
+- **Nothing is lost when the network fails.** Every update is saved to a local
+  outbox (`~/.beacon/outbox/`) and delivered by a background process, which
+  retries failed sends with growing delays for up to 7 days.
+- **Nothing waits on the network.** The helper and hooks return immediately.
+- **Updates actually send.** The session reminder now gives the helper's real
+  install path; V2 named a path that project installs never create, so
+  planning/completed updates were often silently lost.
+- **You hear about stuck updates once, at the end of a turn** — never mid-work.
+  Refused updates are kept in `~/.beacon/outbox/failed/` and logged in full in
+  `~/.beacon/errors.log`.
 
 ## After installing
 
@@ -49,3 +72,15 @@ Don't want it? Tell the agent no once, or run
   installs and fallback downloads will fail.
 - Events never carry secrets, credentials, or file contents — only a type, a
   one-line summary, and the repo and work item it belongs to.
+
+## Tests
+
+```bash
+node tests/beacon-insights.test.mjs
+```
+
+Runs the skill end to end against a local mock Beacon, in throwaway home
+folders, so it never touches your real `~/.beacon` or the real dashboard:
+delivery, retries after outages and timeouts, a rejected key, a bad event in a
+batch, two senders at once (no duplicates), the Claude Code hooks, and both
+helpers with and without Node.
