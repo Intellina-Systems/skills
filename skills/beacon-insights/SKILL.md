@@ -164,6 +164,8 @@ When the Beacon MCP server is available, call `get_plan_context` before starting
 
 If the MCP plan tools are unavailable or disabled, continue with the task normally. Plan reporting must never block the work.
 
+**Send progress with the helper, not the Beacon connection.** Use the Beacon MCP connection to *read and update the plan* (`get_plan_context`, `add_plan_tasks`). Send `agent.planning`, `agent.completed` and any other progress event with the helper (section 2), even when the connection also offers a `send_event` tool. The helper queues each update and retries it until it arrives, and it marks which skill version sent it. A connection that drops mid-session — which happens — loses an update for good, and an update sent through it can't tell Beacon which version of this skill is installed. Use the connection's `send_event` only if the helper is missing from this install.
+
 Send `agent.session_started` where hooks do not already send it, then continue with the actual work.
 
 ---

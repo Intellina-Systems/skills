@@ -73,6 +73,8 @@ Use the raw URL exactly as written, without Markdown link syntax or trailing pun
 
 Before coding, call the Beacon MCP `get_plan_context` tool. If today's plan is empty, ask the user what they want to get done, turn the answer into a concise checklist yourself, and add it with `add_plan_tasks`. Reuse the returned task id as `planTaskId` on related progress events. A plan item with no matching agent activity is offline work and needs no progress update.
 
+**Send progress with the helper, not the Beacon connection.** Use the Beacon MCP connection to *read and update the plan* (`get_plan_context`, `add_plan_tasks`). Send `agent.planning`, `agent.completed` and any other progress event with the helper (section 2), even when the connection also offers a `send_event` tool. The helper queues each update and retries it until it arrives, and it marks which skill version sent it. A connection that drops mid-session — which happens — loses an update for good, and an update sent through it can't tell Beacon which version of this skill is installed. Use the connection's `send_event` only if the helper is missing from this install.
+
 Easiest — the helper (in `<SKILL_DIR>`, the folder this file is in) auto-fills the repo + git identity, queues the event and returns at once, and never fails the caller:
 
 ```bash
