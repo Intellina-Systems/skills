@@ -465,6 +465,75 @@ if (process.platform === 'win32') {
   check('after that, an ordinary edit starts a sender and the due retry is delivered', mock.received.some((e) => e.externalId === 'bcn:test:due') && queued(home).length === 0)
 }
 
+// ----------------------------------- 16. every install is a fresh install
+{
+  const FRESH_JS = path.join(SKILL, 'fresh-install.mjs')
+  const LEGACY =
+    '<!-- beacon-insights:auto (managed by skills/beacon-insights/setup.ps1) -->\n' +
+    'When BEACON_API_KEY is set … send-event helper in ~/.claude/skills/beacon-insights … Fire-and-forget.\n' +
+    '<!-- /beacon-insights:auto -->\n'
+
+  // An old machine-wide note is removed; the user's own text stays.
+  const home = freshHome()
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true })
+  fs.mkdirSync(path.join(home, '.codex'), { recursive: true })
+  const userText = '# My own rules\nAlways write tests.\n'
+  fs.writeFileSync(path.join(home, '.claude', 'CLAUDE.md'), `${userText}\n${LEGACY}`)
+  fs.writeFileSync(path.join(home, '.codex', 'AGENTS.md'), LEGACY) // nothing but our note
+  fs.writeFileSync(path.join(home, '.gemini.md.untouched'), 'x') // unrelated file
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'bcn-proj-'))
+  const oldDirective =
+    '# Project rules\n\n<!-- beacon-insights:project (managed by skills/beacon-insights/setup.sh) -->\n' +
+    'This repo uses the beacon-insights skill … Fire-and-forget; never let it interrupt the work.\n' +
+    '<!-- /beacon-insights:project -->\n'
+  fs.writeFileSync(path.join(projectRoot, 'AGENTS.md'), oldDirective)
+
+  const r1 = run(process.execPath, [FRESH_JS, projectRoot], { home })
+  const claude = fs.readFileSync(path.join(home, '.claude', 'CLAUDE.md'), 'utf8')
+  check('setup removes an old Beacon note from ~/.claude/CLAUDE.md', !claude.includes('beacon-insights'), claude)
+  check("…and keeps the user's own text exactly", claude.trim() === userText.trim(), claude)
+  check('a file that held only the old note is removed', !fs.existsSync(path.join(home, '.codex', 'AGENTS.md')))
+  check('setup says what it cleaned', /Removed an outdated Beacon note/.test(r1.stdout), r1.stdout)
+
+  run(process.execPath, [FRESH_JS, projectRoot], { home }) // second run: must not duplicate
+  const agents = fs.readFileSync(path.join(projectRoot, 'AGENTS.md'), 'utf8')
+  check('the project directive is replaced with the current text', !agents.includes('Fire-and-forget') && agents.includes('never hide its output'), agents)
+  check('…exactly once, however many times setup runs', (agents.match(/<!-- beacon-insights:project\b/g) ?? []).length === 1, agents)
+  check("…and the project's own text stays", agents.startsWith('# Project rules'), agents)
+
+  // Hooks are rewritten, not skipped: an old path is replaced, a user's own hook is kept.
+  const settingsPath = path.join(projectRoot, '.claude', 'settings.json')
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true })
+  fs.writeFileSync(
+    settingsPath,
+    JSON.stringify({
+      hooks: {
+        SessionStart: [{ matcher: 'startup', hooks: [{ type: 'command', command: 'node "/old/place/beacon-insights/session-start-hook.mjs"' }] }],
+        PostToolUse: [{ matcher: 'Edit', hooks: [{ type: 'command', command: 'echo my-own-hook' }] }],
+        Notification: [{ hooks: [{ type: 'command', command: 'node "/old/beacon-insights/beacon-hook.mjs" notify' }] }],
+      },
+    }),
+  )
+  for (let i = 0; i < 2; i++) run(process.execPath, [path.join(SKILL, 'merge-settings.mjs'), settingsPath, '.agents/skills/beacon-insights'], { home })
+  const hooks = JSON.parse(fs.readFileSync(settingsPath, 'utf8')).hooks
+  const commands = (event) => (hooks[event] ?? []).flatMap((e) => e.hooks.map((h) => h.command))
+  check('an old hook path is replaced by the current one', commands('SessionStart').length === 1 && commands('SessionStart')[0].includes('/.agents/skills/beacon-insights/session-start-hook.mjs'), commands('SessionStart'))
+  check("a user's own hook on the same event is kept", commands('PostToolUse').includes('echo my-own-hook'))
+  check('…and ours is there exactly once after two runs', commands('PostToolUse').filter((c) => c.includes('beacon-insights')).length === 1, commands('PostToolUse'))
+  check('retired hooks are removed', !hooks.Notification)
+
+  // The session-start hook heals a machine on its own.
+  const home2 = freshHome()
+  fs.mkdirSync(path.join(home2, '.claude'), { recursive: true })
+  fs.writeFileSync(path.join(home2, '.claude', 'CLAUDE.md'), `${userText}\n${LEGACY}`)
+  run(process.execPath, [path.join(SKILL, 'session-start-hook.mjs')], {
+    home: home2,
+    input: JSON.stringify({ session_id: 'sess-heal', cwd: SKILL, source: 'startup' }),
+  })
+  const healed = fs.readFileSync(path.join(home2, '.claude', 'CLAUDE.md'), 'utf8')
+  check('every session start removes an old Beacon note by itself', !healed.includes('beacon-insights') && healed.trim() === userText.trim(), healed)
+}
+
 server.close()
 console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILED`)
 process.exit(failures === 0 ? 0 : 1)

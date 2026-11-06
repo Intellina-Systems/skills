@@ -22,6 +22,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { hasKey, isDisabled, getGitInfo, pruneOldState, cap } from './beacon-client.mjs'
 import { kickFlush, queueEvent } from './beacon-outbox.mjs'
+import { removeLegacyBlocks } from './fresh-install.mjs'
 import { resolveSignature } from './agent-signature.mjs'
 
 // Where this skill is actually installed — the helpers sit next to this file.
@@ -54,6 +55,14 @@ async function main() {
   const trigger = input.source || 'startup' // startup | resume | clear | compact — SessionStart's own field is called `source`, distinct from the event's `source` (ingestion channel) below
 
   pruneOldState()
+  // An outdated Beacon note in a machine-wide agent file (left by a very old
+  // setup) would contradict the reminder below. Remove it, every session, so
+  // a machine heals on its own. Only our marked block is touched.
+  try {
+    removeLegacyBlocks()
+  } catch {
+    // never let cleanup affect the session
+  }
 
   const { repo, engineer, task } = getGitInfo(cwd)
   if (sessionId) {

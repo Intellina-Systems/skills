@@ -46,16 +46,20 @@ try {
 }
 settings.hooks = settings.hooks || {}
 
-let changed = false
+// Always a fresh install: our own entries (command mentions beacon-insights)
+// are removed and written again from the current registrations, so an older
+// install's paths, matchers or timeouts never survive a re-run. Any other hook
+// a user registered for the same event is left exactly as it was.
+const ours = (entry) => entry.hooks?.some((h) => h.command?.includes('beacon-insights'))
+const before = JSON.stringify(settings.hooks)
 for (const { event, matcher, command } of registrations) {
-  settings.hooks[event] = Array.isArray(settings.hooks[event]) ? settings.hooks[event] : []
-  if (JSON.stringify(settings.hooks[event]).includes('beacon-insights')) continue // already installed for this event
+  const others = (Array.isArray(settings.hooks[event]) ? settings.hooks[event] : []).filter((entry) => !ours(entry))
   const entry = { hooks: [{ type: 'command', command, timeout: HOOK_TIMEOUT }] }
   if (matcher) entry.matcher = matcher
-  settings.hooks[event].push(entry)
-  changed = true
+  settings.hooks[event] = [...others, entry]
   console.log(`Installed ${event} hook -> .claude/settings.json`)
 }
+let changed = JSON.stringify(settings.hooks) !== before
 
 for (const event of RETIRED_EVENTS) {
   if (!Array.isArray(settings.hooks[event])) continue
