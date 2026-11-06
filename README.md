@@ -84,3 +84,7 @@ folders, so it never touches your real `~/.beacon` or the real dashboard:
 delivery, retries after outages and timeouts, a rejected key, a bad event in a
 batch, two senders at once (no duplicates), the Claude Code hooks, and both
 helpers with and without Node.
+
+Verified on Windows so far. macOS and Linux still need one run each — see
+[`tests/README.md`](tests/README.md), which also tells a teammate's coding
+agent what to do if something fails there.

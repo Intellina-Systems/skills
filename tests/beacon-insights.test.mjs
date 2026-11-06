@@ -374,6 +374,97 @@ if (process.platform === 'win32') {
   check('…delivered with skillVersion 3, externalId and occurredAt', ev?.skillVersion === '3' && !!ev?.externalId && !!ev?.occurredAt, ev)
 }
 
+// Async, for anything that talks to the mock while it runs: spawnSync would
+// freeze this process, and with it the mock's ability to answer.
+function runAsync(cmd, args, { home, extraEnv } = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, { env: envFor(home, extraEnv), stdio: ['ignore', 'pipe', 'pipe'] })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (d) => (stdout += d))
+    child.stderr.on('data', (d) => (stderr += d))
+    child.on('exit', (status) => resolve({ status, stdout, stderr }))
+  })
+}
+
+// --------------------------------------- 13. PowerShell helper, without Node
+if (process.platform === 'win32') {
+  const noNodePath = 'C:\\Windows\\System32;C:\\Windows\\System32\\WindowsPowerShell\\v1.0;C:\\Program Files\\Git\\cmd'
+  {
+    const home = freshHome()
+    mock.mode = '201'
+    mock.received = []
+    const r = await runAsync('powershell', ['-NoProfile', '-File', path.join(SKILL, 'send-event.ps1'), '-Type', 'agent.completed', '-Summary', 'PS no node ok'], {
+      home,
+      extraEnv: { PATH: noNodePath },
+    })
+    check('ps1 without Node: delivers directly', r.status === 0 && mock.received.some((e) => e.summary === 'PS no node ok'), { status: r.status, err: r.stderr })
+    check('…and removes its outbox file', queued(home).length === 0, queued(home))
+  }
+  {
+    const home = freshHome()
+    mock.mode = '503'
+    mock.received = []
+    await runAsync('powershell', ['-NoProfile', '-File', path.join(SKILL, 'send-event.ps1'), '-Type', 'agent.completed', '-Summary', 'PS no node 503'], {
+      home,
+      extraEnv: { PATH: noNodePath },
+    })
+    check('ps1 without Node + 503: the update stays queued', queued(home).length === 1, queued(home))
+    check('…and is logged in full for replay', /saved in outbox.*PS no node 503/.test(errorsLog(home)), errorsLog(home))
+    mock.mode = '201'
+    makeAllDue(home)
+    await flushNow(home)
+    check('…and the Node sender later delivers it', queued(home).length === 0 && mock.received.some((e) => e.summary === 'PS no node 503'))
+  }
+}
+
+// -------------------------------------------------- 14. give up after 7 days
+{
+  const home = freshHome()
+  mock.mode = '503'
+  mock.received = []
+  const ob = outboxOf(home)
+  fs.mkdirSync(path.join(ob, 'failed'), { recursive: true })
+  const eightDaysAgo = Date.now() - 8 * 24 * 60 * 60_000
+  fs.writeFileSync(
+    path.join(ob, 'old.json'),
+    JSON.stringify({ v: 1, id: 'old', queuedAt: eightDaysAgo, attempts: 12, nextAttemptAt: 0, lastError: 'HTTP 503', event: { type: 'agent.heartbeat', externalId: 'bcn:test:old', summary: 'ancient' } }),
+  )
+  await flushNow(home)
+  check('an update still failing after 7 days is set aside, not retried forever', queued(home).length === 0 && failed(home).includes('old.json'), { queued: queued(home), failed: failed(home) })
+  check('…and the log says so, with the full event', /gave up after 7 days.*"summary":"ancient"/.test(errorsLog(home)), errorsLog(home))
+  mock.mode = '201'
+}
+
+// --------------------------- 15. retries get another chance while work goes on
+{
+  const home = freshHome()
+  mock.mode = '201'
+  mock.received = []
+  const ob = outboxOf(home)
+  fs.mkdirSync(path.join(ob, 'failed'), { recursive: true })
+  const due = { v: 1, id: 'due', queuedAt: Date.now() - 60_000, attempts: 1, nextAttemptAt: 0, lastError: 'HTTP 503', event: { type: 'agent.heartbeat', externalId: 'bcn:test:due' } }
+  fs.writeFileSync(path.join(ob, 'due.json'), JSON.stringify(due))
+  // A sender was started moments ago: an ordinary edit must not start another.
+  fs.writeFileSync(path.join(ob, '.last-kick'), String(Date.now()))
+  await new Promise((resolve) => {
+    const child = spawn(process.execPath, [path.join(SKILL, 'beacon-hook.mjs'), 'tool'], { env: envFor(home), stdio: ['pipe', 'ignore', 'ignore'] })
+    child.stdin.end(JSON.stringify({ session_id: 'sess-k', cwd: SKILL, tool_name: 'Edit', tool_input: { file_path: '/x/a.ts' } }))
+    child.on('exit', resolve)
+  })
+  await sleep(1500)
+  check('within a minute of the last sender, an edit does not start another', mock.received.length === 0 && queued(home).length === 1)
+  // A minute later, the next edit gives the due retry its chance.
+  fs.writeFileSync(path.join(ob, '.last-kick'), String(Date.now() - 2 * 60_000))
+  await new Promise((resolve) => {
+    const child = spawn(process.execPath, [path.join(SKILL, 'beacon-hook.mjs'), 'tool'], { env: envFor(home), stdio: ['pipe', 'ignore', 'ignore'] })
+    child.stdin.end(JSON.stringify({ session_id: 'sess-k', cwd: SKILL, tool_name: 'Edit', tool_input: { file_path: '/x/b.ts' } }))
+    child.on('exit', resolve)
+  })
+  await waitFor(() => mock.received.some((e) => e.externalId === 'bcn:test:due'))
+  check('after that, an ordinary edit starts a sender and the due retry is delivered', mock.received.some((e) => e.externalId === 'bcn:test:due') && queued(home).length === 0)
+}
+
 server.close()
 console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILED`)
 process.exit(failures === 0 ? 0 : 1)
