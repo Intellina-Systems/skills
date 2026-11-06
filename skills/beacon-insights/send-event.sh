@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
-# Fire-and-forget helper to send a Beacon progress event. This is the easy way
-# to emit — it auto-fills the repo and engineer, times out fast so it can never
-# hang your work, and NEVER fails the caller (telemetry must not interrupt real
-# work). If BEACON_API_KEY isn't set, it silently does nothing.
+# Helper to send a Beacon progress event (Beacon Insights V3). It auto-fills the
+# repo and engineer, queues the event in ~/.beacon/outbox, and returns at once:
+# a background process delivers it and retries if the network fails, so it can
+# never hang your work and a failed send is not lost. It NEVER fails the caller
+# (telemetry must not interrupt real work). If BEACON_API_KEY isn't set, it
+# silently does nothing.
+#
+# It is silent when all is well. Don't hide its output — if it prints
+# something, that is a real problem worth telling the user about.
 #
 # Usage (positional — the short form most callers reach for):
 #   bash send-event.sh agent.heartbeat "Improving sign-in reliability"
@@ -134,6 +139,21 @@ fi
 
 json_escape() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e ':a;N;$!ba;s/\n/\\n/g'; }
 
+new_id() {
+  local hex
+  hex="$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')"
+  printf '%s' "${hex:-$$-$RANDOM-$RANDOM}"
+}
+
+now_ms() {
+  local ms
+  ms="$(date +%s%3N 2>/dev/null)"
+  case "$ms" in
+    *[!0-9]* | '') printf '%s000' "$(date +%s)" ;; # BSD date has no %N
+    *) printf '%s' "$ms" ;;
+  esac
+}
+
 if [ -n "$JSON" ]; then
   BODY="$JSON"
 else
@@ -143,7 +163,7 @@ else
     echo "send-event: no event type given, nothing sent (try: send-event.sh agent.heartbeat \"summary\")" >&2
     exit 0
   }
-  BODY="{\"type\":\"$(json_escape "$TYPE")\",\"skillVersion\":\"2\""
+  BODY="{\"type\":\"$(json_escape "$TYPE")\",\"skillVersion\":\"3\""
   [ -n "$TASK" ] && BODY="$BODY,\"task\":\"$(json_escape "$TASK")\""
   [ -n "$PLAN_TASK" ] && BODY="$BODY,\"planTaskId\":\"$(json_escape "$PLAN_TASK")\""
   [ -n "$ENGINEER" ] && BODY="$BODY,\"engineer\":\"$(json_escape "$ENGINEER")\""
@@ -162,27 +182,50 @@ else
     *[!0-9.]* ) ;; # not numeric — skip
     * ) BODY="$BODY,\"confidence\":$CONFIDENCE" ;;
   esac
+  # A stable id and the real time, so a retry is de-duplicated by the server
+  # and still lands at the moment this happened. (The Node outbox adds these
+  # itself; this covers the no-Node path below.)
+  BODY="$BODY,\"externalId\":\"bcn:q:$(new_id)\",\"occurredAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\""
   BODY="$BODY}"
 fi
 
-# Discard the response body, keep the status. A revoked key, a malformed
-# payload, and a working send are otherwise indistinguishable — all exit 0 —
-# which is how telemetry stays broken for weeks without anyone noticing.
-# curl prints 000 itself when it never got a response, so no `|| echo` fallback
-# here — that would concatenate with curl's own output. The :- covers curl
-# being absent entirely.
-STATUS="$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' \
-  -X POST "$BEACON_URL/api/events" \
-  -H "Authorization: Bearer $BEACON_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d "$BODY" 2>/dev/null)"
-STATUS="${STATUS:-000}"
+# --- queue it ------------------------------------------------------------------
+# Every event goes into the outbox first; nothing here waits on the network.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+OUTBOX_JS="$SCRIPT_DIR/beacon-outbox.mjs"
 
-case "$STATUS" in
-  2*) ;; # delivered — stay quiet, this runs constantly
-  000) echo "send-event: could not reach Beacon at $BEACON_URL (offline or timed out)" >&2 ;;
-  401 | 403) echo "send-event: Beacon rejected the API key (HTTP $STATUS) — it may have been revoked" >&2 ;;
-  *) echo "send-event: Beacon rejected the event (HTTP $STATUS)" >&2 ;;
-esac
+if command -v node >/dev/null 2>&1 && [ -f "$OUTBOX_JS" ]; then
+  # Writes the event to ~/.beacon/outbox and starts a background sender, then
+  # returns — a few tens of milliseconds, whatever the network is doing.
+  printf '%s' "$BODY" | node "$OUTBOX_JS" enqueue
+  exit 0
+fi
 
-exit 0 # always, whatever happened above
+# No Node (or the helper was copied away from the rest of the skill): queue the
+# file ourselves, in the same format the Node sender reads, and make one
+# attempt in the background. If that attempt fails the file stays queued, and
+# the next Node sender — any hook in any project on this machine — retries it.
+OUTBOX="$HOME/.beacon/outbox"
+mkdir -p "$OUTBOX" 2>/dev/null
+ENTRY_ID="$(now_ms)-$(new_id | cut -c1-8)"
+ENTRY="$OUTBOX/$ENTRY_ID.json"
+printf '{"v":1,"id":"%s","queuedAt":%s,"attempts":0,"nextAttemptAt":0,"lastError":null,"event":%s}' \
+  "$ENTRY_ID" "$(now_ms)" "$BODY" > "$ENTRY.tmp" 2>/dev/null && mv "$ENTRY.tmp" "$ENTRY" 2>/dev/null
+
+(
+  STATUS="$(curl -sS --max-time 20 -o /dev/null -w '%{http_code}' \
+    -X POST "$BEACON_URL/api/events" \
+    -H "Authorization: Bearer $BEACON_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d "$BODY" 2>/dev/null)"
+  case "${STATUS:-000}" in
+    2*) rm -f "$ENTRY" ;;
+    *)
+      printf '%s HTTP %s sending %s — saved in outbox/%s.json for retry: %s\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${STATUS:-000}" "$TYPE" "$ENTRY_ID" "$BODY" \
+        >> "$HOME/.beacon/errors.log" 2>/dev/null
+      ;;
+  esac
+) >/dev/null 2>&1 &
+
+exit 0 # always, whatever happens above

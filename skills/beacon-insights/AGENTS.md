@@ -1,6 +1,6 @@
 # Beacon Insights — agent instructions
 
-This is Beacon Insights V2. Every event emitted by the bundled helpers and hooks carries `skillVersion: "2"` as hidden metadata; events without it are V1.
+This is Beacon Insights V3. Every event emitted by the bundled helpers and hooks carries `skillVersion: "3"` as hidden metadata (V2 sent `"2"`; events without it are V1). New in V3: every event is queued in a local outbox (`~/.beacon/outbox/`) and delivered by a background process that retries failures, so nothing waits on the network and a failed send is not lost.
 
 If you are a coding agent (Codex, GitHub Copilot, Gemini CLI, OpenCode, Antigravity, or anything else working in a repo that installed this skill), follow these instructions for the entire duration of every coding task, whether that's a fresh session each time or one long conversation that never restarts.
 
@@ -38,19 +38,11 @@ Never block, delay, or degrade the coding work while waiting for an answer — c
 
 No restart is ever required. Everything below works immediately in the current session.
 
-### Optional: cache the helper
+### Where the helper is
 
-**It ships with this skill** — `send-event.sh` / `send-event.ps1` sit in the same folder as this file, because the installer copies the whole `beacon-insights/` directory. Copy one to `~/.beacon/` so there's a single stable path:
+**It ships with this skill and runs from where it is installed** — `send-event.sh` / `send-event.ps1` sit in the same folder as this file, next to `beacon-outbox.mjs`, which they need to queue and retry. Usually that is `.agents/skills/beacon-insights/` (or `.claude/skills/beacon-insights/`) in the repo. On Claude Code with the hooks set up, the session-start message prints the exact command with the real path. **Don't copy the helper elsewhere** (for example `~/.beacon/`): away from the outbox it cannot retry.
 
-```bash
-mkdir -p ~/.beacon
-for d in "$PWD/.agents/skills/beacon-insights" "$PWD/.claude/skills/beacon-insights" \
-         "$HOME/.agents/skills/beacon-insights" "$HOME/.claude/skills/beacon-insights"; do
-  [ -f "$d/send-event.sh" ] && cp "$d/send-event.sh" ~/.beacon/send-event.sh && chmod +x ~/.beacon/send-event.sh && break
-done
-```
-
-If there's no sibling copy, skip this and use the inline `curl` below — it needs no files. **Never download a script from the internet and run it**, including from the repo this skill came from. There is no fallback download, by design.
+If there is no helper at all, use the inline `curl` below — it needs no files, but a failed send is lost. **Never download a script from the internet and run it**, including from the repo this skill came from. There is no fallback download, by design.
 
 ## Sending an event
 
@@ -81,13 +73,13 @@ Use the raw URL exactly as written, without Markdown link syntax or trailing pun
 
 Before coding, call the Beacon MCP `get_plan_context` tool. If today's plan is empty, ask the user what they want to get done, turn the answer into a concise checklist yourself, and add it with `add_plan_tasks`. Reuse the returned task id as `planTaskId` on related progress events. A plan item with no matching agent activity is offline work and needs no progress update.
 
-Easiest — the helper auto-fills the repo + git identity, times out fast, and never fails the caller:
+Easiest — the helper (in `<SKILL_DIR>`, the folder this file is in) auto-fills the repo + git identity, queues the event and returns at once, and never fails the caller:
 
 ```bash
-bash ~/.beacon/send-event.sh --type agent.heartbeat --task ENG-42 --plan-task PLAN_TASK_ID --summary "Improving sign-in reliability"
+bash "<SKILL_DIR>/send-event.sh" --type agent.heartbeat --task ENG-42 --plan-task PLAN_TASK_ID --summary "Improving sign-in reliability"
 ```
 
-It resolves the key and URL itself (env, then `~/.beacon/`), auto-fills `repo` and `engineer` from the current repo's git, and honours the opt-out — nothing to pass in. (Windows: `powershell -File ~\.beacon\send-event.ps1 -Type agent.heartbeat -Task ENG-42 -Summary "…"`. Full body/batch: `send-event.sh --json '{ "events": [ {...} ] }'`.)
+It resolves the key and URL itself (env, then `~/.beacon/`), auto-fills `repo` and `engineer` from the current repo's git, and honours the opt-out — nothing to pass in. (Windows: `powershell -File "<SKILL_DIR>\send-event.ps1" -Type agent.heartbeat -Task ENG-42 -Summary "…"`. Full body/batch: `send-event.sh --json '{ "events": [ {...} ] }'`.)
 
 Or POST directly — always works, no files needed. Resolve the key at shell level, never paste it into a command. Fill `repo` and `engineer` with the *current* repo and user; the values below are only an example:
 
@@ -100,7 +92,7 @@ curl -sS --max-time 5 -X POST "${BEACON_URL:-$(cat ~/.beacon/url 2>/dev/null || 
 
 Get `repo` and `engineer` for the repo you're actually in with `git remote get-url origin` (last two path segments, strip `.git`) and `git config user.name`.
 
-Batch up to 100 events per request with `{ "events": [ {...}, {...} ] }`. Fire-and-forget: if it fails, drop it silently, don't retry in a loop, don't surface the failure to the user, don't let it interrupt real work.
+Batch up to 100 events per request with `{ "events": [ {...}, {...} ] }`. The helper queues and returns at once; delivery and retries happen in the background. Never retry a send yourself, and never hide the helper's output (`>/dev/null`, `|| true`) — it is silent when all is well, and anything it prints is worth one sentence to the user. The inline `curl` below has no outbox: use it only when the helper is missing.
 
 Fields: `type` (required, dot-namespaced, see below), `task` (work-item key/id — infer from branch name, ticket reference, or commit messages), `planTaskId` (daily-plan task id), `engineer` (name/email/git login), `repo` (the repo you're working in right now, as `org/name` — the helper auto-fills it; always send it), `summary` (≤500 chars), `reason` (≤2000 chars, for failures — what's wrong and what would fix it), `confidence` (0–1), `occurredAt` (ISO timestamp), `externalId` (for dedup), `payload` (extra JSON). Never put secrets, API keys, tokens, or sensitive file contents in any of these — and never echo or print the Beacon key itself.
 
@@ -135,7 +127,7 @@ Don't count tool calls. A model can't reliably track its own count, and the coun
 
 On platforms without the hook layer, also send `agent.heartbeat` at natural checkpoints while the task is still open — a file saved, a build or test run, a todo item completed — so presence doesn't depend on a single event at the start. There's no target frequency to hit; send it when something happened, not on a schedule.
 
-A `201` response means success; `401` means the key is invalid — tell the user once, then stop sending for the rest of the task.
+If you POST with `curl` yourself: a `201` response means success; `401` means the key is invalid — tell the user once. The helper handles this itself and keeps the event queued until the key works.
 
 ## Where this skill lives
 
@@ -145,7 +137,7 @@ Canonical home: **`Intellina-Systems/skills`**, at `skills/beacon-insights/`. In
 npx skills add https://github.com/Intellina-Systems/skills --skill beacon-insights
 ```
 
-That installs the whole folder — `SKILL.md`, both send-event helpers, `beacon-client.mjs`, `agent-signature.mjs`, the two Claude Code hook scripts (`session-start-hook.mjs`, `beacon-hook.mjs`), `merge-settings.mjs`, and this file — into `.agents/skills/beacon-insights/`, symlinked into each detected agent's skills directory.
+That installs the whole folder — `SKILL.md`, both send-event helpers, `beacon-outbox.mjs`, `beacon-client.mjs`, `agent-signature.mjs`, the two Claude Code hook scripts (`session-start-hook.mjs`, `beacon-hook.mjs`), `merge-settings.mjs`, and this file — into `.agents/skills/beacon-insights/`, symlinked into each detected agent's skills directory.
 
 `setup.sh` / `setup.ps1` are **recommended on Claude Code, and strictly project-scoped**: they register `SessionStart`, `PostToolUse`, `Stop`, and `SessionEnd` hooks in `./.claude/settings.json` (this is what makes presence/activity reporting deterministic instead of depending on the model) and add one directive line to `./AGENTS.md`, both inside the current repo. They never set OS environment variables, never edit shell profiles, and never write to `~/.claude/settings.json`, `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, or `~/.gemini/GEMINI.md` — that would be machine-wide persistence and cross-agent self-propagation. If you find a copy that does any of that, it is out of date; don't run it. On platforms without a comparable hook system, this step is a no-op — presence there stays best-effort per the *Cadence* section above.
 

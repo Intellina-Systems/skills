@@ -1,7 +1,12 @@
 <#
-Fire-and-forget helper to send a Beacon progress event (Windows). Auto-fills the
-repo and engineer, times out fast so it can never hang your work, and never
-fails the caller. If BEACON_API_KEY isn't set it silently does nothing.
+Helper to send a Beacon progress event (Windows, Beacon Insights V3). Auto-fills
+the repo and engineer, queues the event in ~/.beacon/outbox and returns at once:
+a background process delivers it and retries if the network fails, so it can
+never hang your work and a failed send is not lost. Never fails the caller. If
+BEACON_API_KEY isn't set it silently does nothing.
+
+It is silent when all is well. Don't hide its output - if it prints something,
+that is a real problem worth telling the user about.
 
 Usage (positional - the short form most callers reach for):
   powershell -File send-event.ps1 agent.heartbeat "Improving sign-in reliability"
@@ -163,7 +168,7 @@ else {
     [Console]::Error.WriteLine('send-event: no event type given, nothing sent (try: send-event.ps1 agent.heartbeat "summary")')
     exit 0
   }
-  $obj = @{ type = $Type; skillVersion = '2' }
+  $obj = @{ type = $Type; skillVersion = '3' }
   if ($Task) { $obj.task = $Task }
   if ($PlanTask) { $obj.planTaskId = $PlanTask }
   if ($Engineer) { $obj.engineer = $Engineer }
@@ -179,28 +184,50 @@ else {
   if ($SessionId) { $obj.sessionId = $SessionId }
   $c = 0.0
   if ($Confidence -and [double]::TryParse($Confidence, [ref]$c)) { $obj.confidence = $c }
+  # A stable id and the real time, so a retry is de-duplicated by the server
+  # and still lands at the moment this happened.
+  $obj.externalId = 'bcn:q:' + [guid]::NewGuid().ToString()
+  $obj.occurredAt = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
   $body = $obj | ConvertTo-Json -Compress
 }
 
-# Report failures on stderr. A revoked key, a malformed payload, and a working
-# send are otherwise indistinguishable - all exit 0 - which is how telemetry
-# stays broken for weeks without anyone noticing.
+# --- queue it ------------------------------------------------------------------
+# Every event goes into the outbox first; nothing here waits on the network.
+$outboxJs = Join-Path $PSScriptRoot 'beacon-outbox.mjs'
+$node = Get-Command node -ErrorAction SilentlyContinue
+if ($node -and (Test-Path $outboxJs)) {
+  # Writes the event to ~/.beacon/outbox and starts a background sender, then
+  # returns - a few tens of milliseconds, whatever the network is doing.
+  $body | & $node.Source $outboxJs enqueue
+  exit 0
+}
+
+# No Node (or the helper was copied away from the rest of the skill): queue the
+# file ourselves, in the same format the Node sender reads, and make one quick
+# attempt. If it fails the file stays queued, and the next Node sender - any
+# hook in any project on this machine - retries it.
+$outbox = Join-Path $beaconDir 'outbox'
+New-Item -ItemType Directory -Force -Path $outbox | Out-Null
+$nowMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+$entryId = "$nowMs-" + [guid]::NewGuid().ToString().Substring(0, 8)
+$entryFile = Join-Path $outbox "$entryId.json"
+$entry = '{"v":1,"id":"' + $entryId + '","queuedAt":' + $nowMs + ',"attempts":0,"nextAttemptAt":0,"lastError":null,"event":' + $body + '}'
+[System.IO.File]::WriteAllText("$entryFile.tmp", $entry)
+Move-Item -Force "$entryFile.tmp" $entryFile
+
 try {
   Invoke-RestMethod -Method Post -Uri "$baseUrl/api/events" -TimeoutSec 5 `
     -Headers @{ Authorization = "Bearer $apiKey" } `
     -ContentType 'application/json' -Body $body -ErrorAction Stop | Out-Null
+  Remove-Item -Force $entryFile
 }
 catch {
   $status = $null
   if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode }
+  $line = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') + " HTTP $status sending $Type - saved in outbox/$entryId.json for retry: $body"
+  Add-Content -Path (Join-Path $beaconDir 'errors.log') -Value $line
   if ($status -eq 401 -or $status -eq 403) {
-    [Console]::Error.WriteLine("send-event: Beacon rejected the API key (HTTP $status) - it may have been revoked")
-  }
-  elseif ($status) {
-    [Console]::Error.WriteLine("send-event: Beacon rejected the event (HTTP $status)")
-  }
-  else {
-    [Console]::Error.WriteLine("send-event: could not reach Beacon at $baseUrl (offline or timed out)")
+    [Console]::Error.WriteLine("send-event: Beacon rejected the API key (HTTP $status) - it may have been revoked. The update is saved and will be retried.")
   }
 }
 exit 0 # always, whatever happened above
