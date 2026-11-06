@@ -335,6 +335,14 @@ const bash = process.env.BASH_PATH || (process.platform === 'win32' ? 'C:\\Progr
   await waitFor(() => mock.received.some((e) => e.summary === 'Plan via bash'))
   const ev = mock.received.find((e) => e.summary === 'Plan via bash')
   check('…delivered in the background with skillVersion 3 and model instrumentation', ev?.skillVersion === '3' && ev?.instrumentation === 'model', ev)
+
+  // json_escape must work on BSD/macOS sed too, not only GNU: a summary with a
+  // newline, quote, backslash and tab still arrives as valid JSON, unchanged.
+  const tricky = 'Line one "quoted"\nLine two with a \\ and a\ttab'
+  const r2 = run(bash, [path.join(SKILL, 'send-event.sh').replace(/\\/g, '/'), '--type', 'agent.completed', '--summary', tricky], { home })
+  check('send-event.sh escapes a multi-line summary silently', r2.stdout.trim() === '' && r2.stderr.trim() === '', { out: r2.stdout, err: r2.stderr })
+  await waitFor(() => mock.received.some((e) => e.summary === tricky))
+  check('…and it arrives unchanged', mock.received.some((e) => e.summary === tricky), mock.received.map((e) => e.summary))
 }
 
 // --------------------------------------------- 11. bash helper, without Node
