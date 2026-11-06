@@ -53,25 +53,17 @@ else
   fi
 fi
 
-# --- 2. Project-scoped agent directive ----------------------------------------
-# One line in THIS repo's AGENTS.md, so non-Claude agents working here pick the
-# skill up too. This is the repo telling agents about itself - the normal use of
-# AGENTS.md - not an edit to any agent's global config.
-DIRECTIVE="This repo uses the beacon-insights skill: report coding progress to Beacon by running the send-event helper in .agents/skills/beacon-insights (or .claude/skills/beacon-insights). See that folder's SKILL.md for when to emit what. Fire-and-forget; never let it interrupt the work."
-
-AGENTS_FILE="$ROOT/AGENTS.md"
-if [ -f "$AGENTS_FILE" ] && grep -qF "beacon-insights:project" "$AGENTS_FILE" 2>/dev/null; then
-  echo "Directive already in AGENTS.md - skipped."
+# --- 2. Fresh install: project directive, and old leftovers removed ------------
+# The one line in THIS repo's AGENTS.md (so non-Claude agents pick the skill up)
+# is rewritten to the current text every run. Old versions of this skill wrote
+# a Beacon note into machine-wide agent files; if one is still there it is
+# removed — only the block between Beacon's own markers, nothing else.
+if command -v node >/dev/null 2>&1; then
+  node "$SKILL_DIR/fresh-install.mjs" "$ROOT"
 else
-  {
-    echo ""
-    echo "<!-- beacon-insights:project (managed by skills/beacon-insights/setup.sh) -->"
-    echo "$DIRECTIVE"
-    echo "<!-- /beacon-insights:project -->"
-  } >> "$AGENTS_FILE"
-  echo "Added project directive to AGENTS.md"
+  echo "node not found - the project directive was not updated."
 fi
 
 echo ""
-echo "Done - scoped to this repository only. No machine-wide changes were made."
+echo "Done - scoped to this repository only. The only change outside it is removing an outdated Beacon note, if an older version left one."
 echo "Nothing to restart; it is active from the next session in this project."

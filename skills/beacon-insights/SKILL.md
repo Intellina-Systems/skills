@@ -94,6 +94,9 @@ Without this step, reporting still happens, but it depends on you remembering to
 |---|---|
 | Registers `SessionStart`, `PostToolUse`, `Stop`, and `SessionEnd` hooks (`session-start-hook.mjs` + `beacon-hook.mjs`) | `./.claude/settings.json` — **the project's**, not `~/.claude/settings.json` |
 | Adds one directive line so other agents in this repo pick the skill up | `./AGENTS.md` — the repo's own |
+| Removes an outdated Beacon note an old version left in a machine-wide agent file, if there is one — only the block between Beacon's own markers | `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.gemini/GEMINI.md` |
+
+**Every run is a fresh install.** Beacon's hooks and its `AGENTS.md` line are rewritten to the current version each time, never skipped because an older one exists; other hooks and text are left alone. The session-start hook also removes an outdated machine-wide Beacon note on its own, every session.
 
 They read the key from `~/.beacon/key` and exit immediately if there isn't one. They never write it anywhere.
 
@@ -163,6 +166,8 @@ When the Beacon MCP server is available, call `get_plan_context` before starting
 - Offline work can stay on the plan without agent progress. Never invent progress for it.
 
 If the MCP plan tools are unavailable or disabled, continue with the task normally. Plan reporting must never block the work.
+
+**Send progress with the helper, not the Beacon connection.** Use the Beacon MCP connection to *read and update the plan* (`get_plan_context`, `add_plan_tasks`). Send `agent.planning`, `agent.completed` and any other progress event with the helper (section 2), even when the connection also offers a `send_event` tool. The helper queues each update and retries it until it arrives, and it marks which skill version sent it. A connection that drops mid-session — which happens — loses an update for good, and an update sent through it can't tell Beacon which version of this skill is installed. Use the connection's `send_event` only if the helper is missing from this install.
 
 Send `agent.session_started` where hooks do not already send it, then continue with the actual work.
 
@@ -326,7 +331,8 @@ npx skills add https://github.com/Intellina-Systems/skills --skill beacon-insigh
 | `agent-signature.mjs` | Works out the model / harness / harness version for the hook path, from the environment and the session transcript. Never invoked directly; the shell helpers implement the same contract themselves, since they have to run without Node |
 | `session-start-hook.mjs` | Claude Code SessionStart hook — queues `agent.session_started` itself, then re-injects the reminder (with the helper's real path on this machine) on startup, resume, clear, and compaction |
 | `beacon-hook.mjs` | Claude Code hook covering PostToolUse, Stop, SessionEnd — the deterministic presence/activity layer, dispatched by subcommand. Counts tool calls itself and heartbeats every ~15-20; at the end of a turn, tells the person if updates are stuck |
-| `merge-settings.mjs` | Idempotently registers all of the above into a project's `.claude/settings.json` — called by `setup.sh`/`setup.ps1`, not run directly |
+| `merge-settings.mjs` | Registers all of the above into a project's `.claude/settings.json`, replacing any older Beacon entries — called by `setup.sh`/`setup.ps1`, not run directly |
+| `fresh-install.mjs` | Rewrites the project's `AGENTS.md` line to the current text and removes outdated Beacon notes from machine-wide agent files — called by setup and the session-start hook |
 | `AGENTS.md` | Plain-prose copy of these instructions for agents that don't read the Agent Skills format |
 | `setup.sh` / `setup.ps1` | **Project-scoped** persistence: registers every hook above in `./.claude/settings.json` and adds one line to `./AGENTS.md`. Nothing outside the repo. Optional — Step 4, with the user's go-ahead |
 

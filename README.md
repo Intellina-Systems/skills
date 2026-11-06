@@ -28,8 +28,10 @@ npx skills add https://github.com/Intellina-Systems/skills --skill beacon-insigh
 ## Updating to V3
 
 Beacon Insights is at **V3**. Re-run the install command above in each repo to
-update, then (on Claude Code) run the bundled setup again so the hooks point at
-the new files:
+update, then (on Claude Code) run the bundled setup again. Every setup run is a
+fresh install: Beacon's hooks and project note are rewritten to the current
+version, and any outdated Beacon note an old version left in `~/.claude/CLAUDE.md`
+(or Codex/Gemini's equivalents) is removed. Nothing to check by hand:
 
 ```bash
 bash .agents/skills/beacon-insights/setup.sh
@@ -84,3 +86,7 @@ folders, so it never touches your real `~/.beacon` or the real dashboard:
 delivery, retries after outages and timeouts, a rejected key, a bad event in a
 batch, two senders at once (no duplicates), the Claude Code hooks, and both
 helpers with and without Node.
+
+Verified on Windows so far. macOS and Linux still need one run each — see
+[`tests/README.md`](tests/README.md), which also tells a teammate's coding
+agent what to do if something fails there.

@@ -22,6 +22,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { hasKey, isDisabled, getGitInfo, pruneOldState, cap } from './beacon-client.mjs'
 import { kickFlush, queueEvent } from './beacon-outbox.mjs'
+import { removeLegacyBlocks } from './fresh-install.mjs'
 import { resolveSignature } from './agent-signature.mjs'
 
 // Where this skill is actually installed — the helpers sit next to this file.
@@ -54,6 +55,14 @@ async function main() {
   const trigger = input.source || 'startup' // startup | resume | clear | compact — SessionStart's own field is called `source`, distinct from the event's `source` (ingestion channel) below
 
   pruneOldState()
+  // An outdated Beacon note in a machine-wide agent file (left by a very old
+  // setup) would contradict the reminder below. Remove it, every session, so
+  // a machine heals on its own. Only our marked block is touched.
+  try {
+    removeLegacyBlocks()
+  } catch {
+    // never let cleanup affect the session
+  }
 
   const { repo, engineer, task } = getGitInfo(cwd)
   if (sessionId) {
@@ -95,7 +104,7 @@ async function main() {
     'What hooks cannot see is *why* — two moments still need you to say something, each time it genuinely happens, with no fixed cadence to track:\n' +
     '  - agent.planning, once you have formed a plan\n' +
     '  - agent.completed, once the task is verified done\n' +
-    'Send these with this exact command (the path is where the helper is installed on this machine):\n' +
+    'Send these with this exact command (the path is where the helper is installed on this machine) — not with the Beacon MCP send_event tool, which loses the update if the connection drops and cannot report this skill\'s version; use the Beacon MCP connection for the plan only:\n' +
     howToSend +
     'The helper queues the update and returns immediately; a background process delivers it and retries if the network fails, so it never slows the work. ' +
     'Do not redirect its output to /dev/null or append "|| true" — it is silent when all is well, and anything it prints is a real problem worth one sentence to the user. ' +

@@ -63,22 +63,18 @@ else {
     }
 }
 
-# --- 2. Project-scoped agent directive ----------------------------------------
-# One line in THIS repo's AGENTS.md, so non-Claude agents working here pick the
-# skill up too. This is the repo telling agents about itself - the normal use of
-# AGENTS.md - not an edit to any agent's global config.
-$directive = "This repo uses the beacon-insights skill: report coding progress to Beacon by running the send-event helper in .agents/skills/beacon-insights (or .claude/skills/beacon-insights). See that folder's SKILL.md for when to emit what. Fire-and-forget; never let it interrupt the work."
-
-$agentsFile = Join-Path $root 'AGENTS.md'
-if ((Test-Path $agentsFile) -and (Select-String -Path $agentsFile -SimpleMatch "beacon-insights:project" -Quiet)) {
-    Write-Host "Directive already in AGENTS.md - skipped."
+# --- 2. Fresh install: project directive, and old leftovers removed ------------
+# The one line in THIS repo's AGENTS.md (so non-Claude agents pick the skill up)
+# is rewritten to the current text every run. Old versions of this skill wrote
+# a Beacon note into machine-wide agent files; if one is still there it is
+# removed - only the block between Beacon's own markers, nothing else.
+if (Get-Command node -ErrorAction SilentlyContinue) {
+    node (Join-Path $skillDir 'fresh-install.mjs') $root
 }
 else {
-    $block = "`n<!-- beacon-insights:project (managed by skills/beacon-insights/setup.ps1) -->`n$directive`n<!-- /beacon-insights:project -->`n"
-    Add-Content -Path $agentsFile -Value $block -Encoding utf8
-    Write-Host "Added project directive to AGENTS.md"
+    Write-Host "node not found - the project directive was not updated."
 }
 
 Write-Host ""
-Write-Host "Done - scoped to this repository only. No machine-wide changes were made."
+Write-Host "Done - scoped to this repository only. The only change outside it is removing an outdated Beacon note, if an older version left one."
 Write-Host "Nothing to restart; it is active from the next session in this project."
